@@ -1,0 +1,12 @@
+{
+  "name": "@plato/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "echo 'desktop build not wired yet'",
+    "dev": "echo 'desktop dev not wired yet'",
+    "lint": "echo 'desktop lint not wired yet'",
+    "test": "echo 'desktop test not wired yet'",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  }
+}

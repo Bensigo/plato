@@ -1,0 +1,12 @@
+{
+  "name": "@plato/codex-runner",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "echo 'codex-runner build not wired yet'",
+    "dev": "echo 'codex-runner dev not wired yet'",
+    "lint": "echo 'codex-runner lint not wired yet'",
+    "test": "echo 'codex-runner test not wired yet'",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  }
+}

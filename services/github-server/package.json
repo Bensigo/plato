@@ -1,0 +1,12 @@
+{
+  "name": "@plato/github-server",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "echo 'github-server build not wired yet'",
+    "dev": "echo 'github-server dev not wired yet'",
+    "lint": "echo 'github-server lint not wired yet'",
+    "test": "echo 'github-server test not wired yet'",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  }
+}

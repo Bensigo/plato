@@ -1,0 +1,12 @@
+{
+  "name": "@plato/db",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "echo 'db build not wired yet'",
+    "dev": "echo 'db dev not wired yet'",
+    "lint": "echo 'db lint not wired yet'",
+    "test": "echo 'db test not wired yet'",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  }
+}
