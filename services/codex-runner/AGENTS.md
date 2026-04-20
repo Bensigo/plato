@@ -26,3 +26,7 @@ This service owns Codex task execution inside Plato. It is responsible for task 
 - Use descriptive type names for runner contracts.
 - Avoid framework-heavy abstractions in the core service layer.
 - Add short comments only where state transitions or scheduling behavior are non-obvious.
+- Prefer small, explicit interfaces over implicit objects with optional behavior.
+- Make failure modes part of the design. If a dependency can fail, the service contract should make that visible and testable.
+- Keep public method names aligned with the runner language used across Plato: task, session, worktree, interrupt, resume.
+- Validate state transitions in one place instead of spreading lifecycle rules across many files.

@@ -6,6 +6,19 @@ export type RunnerTaskState =
   | "completed"
   | "failed";
 
+export class WorktreeProvisioningError extends Error {
+  readonly code = "WORKTREE_PROVISIONING_FAILED";
+
+  constructor(
+    message: string,
+    readonly taskId: string,
+    readonly repoPath: string,
+  ) {
+    super(message);
+    this.name = "WorktreeProvisioningError";
+  }
+}
+
 export interface StartTaskInput {
   taskId: string;
   repoPath: string;
@@ -41,11 +54,14 @@ export interface SessionEvent {
   type:
     | "task.queued"
     | "task.started"
+    | "task.failed"
     | "task.interrupted"
     | "task.completed"
     | "task.resumed";
   sessionId?: string;
   worktreePath?: string;
+  errorCode?: string;
+  message?: string;
 }
 
 export interface RunnerStore {

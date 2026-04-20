@@ -7,6 +7,7 @@ import type {
   WorktreeAllocation,
   WorktreeManager,
 } from "./contracts.js";
+import { WorktreeProvisioningError } from "./contracts.js";
 
 export interface CodexRunnerServiceDeps {
   store: RunnerStore;
@@ -131,15 +132,41 @@ export class CodexRunnerService {
       return;
     }
 
-    const allocation =
-      nextTask.worktreePath === undefined
-        ? await this.#worktreeManager.createWorktree(nextTask.taskId, nextTask.repoPath)
-        : {
-            taskId: nextTask.taskId,
-            repoPath: nextTask.repoPath,
-            branchName: `plato/task-${nextTask.taskId}`,
-            worktreePath: nextTask.worktreePath,
-          };
+    let allocation: WorktreeAllocation;
+    try {
+      allocation =
+        nextTask.worktreePath === undefined
+          ? await this.#worktreeManager.createWorktree(nextTask.taskId, nextTask.repoPath)
+          : {
+              taskId: nextTask.taskId,
+              repoPath: nextTask.repoPath,
+              branchName: `plato/task-${nextTask.taskId}`,
+              worktreePath: nextTask.worktreePath,
+            };
+    } catch (error) {
+      const provisioningError =
+        error instanceof WorktreeProvisioningError
+          ? error
+          : new WorktreeProvisioningError(
+              error instanceof Error ? error.message : "Unknown worktree provisioning failure",
+              nextTask.taskId,
+              nextTask.repoPath,
+            );
+
+      const failedTask: RunnerTaskRecord = {
+        ...nextTask,
+        state: "failed",
+      };
+
+      await this.#store.saveTask(failedTask);
+      await this.#logStreamer.append({
+        taskId: nextTask.taskId,
+        type: "task.failed",
+        errorCode: provisioningError.code,
+        message: provisioningError.message,
+      });
+      return;
+    }
 
     const session = await this.#processPool.spawn(nextTask, allocation);
     const runningTask: RunnerTaskRecord = {

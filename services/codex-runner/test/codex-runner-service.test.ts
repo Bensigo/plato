@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { CodexRunnerService } from "../src/codex-runner-service.js";
-import type {
-  LogStreamer,
+import {
+  WorktreeProvisioningError,
+  type LogStreamer,
   ManagedSession,
   ProcessPool,
   RunnerStore,
@@ -45,8 +46,13 @@ class InMemoryLogStreamer implements LogStreamer {
 
 class FakeWorktreeManager implements WorktreeManager {
   readonly allocations: WorktreeAllocation[] = [];
+  failure?: Error;
 
   async createWorktree(taskId: string, repoPath: string): Promise<WorktreeAllocation> {
+    if (this.failure) {
+      throw this.failure;
+    }
+
     const allocation = {
       taskId,
       repoPath,
@@ -150,6 +156,44 @@ describe("CodexRunnerService", () => {
     expect(secondTask.worktreePath).toBeUndefined();
     expect(processPool.spawns).toHaveLength(1);
     expect(worktreeManager.allocations).toHaveLength(1);
+  });
+
+  it("fails the task when worktree provisioning fails", async () => {
+    const store = new InMemoryRunnerStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    worktreeManager.failure = new WorktreeProvisioningError(
+      "git worktree add failed",
+      "task-1",
+      "/repo",
+    );
+    const processPool = new FakeProcessPool(1);
+    const service = new CodexRunnerService({
+      store,
+      logStreamer,
+      worktreeManager,
+      processPool,
+    });
+
+    const task = await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "Implement the runner",
+    });
+
+    expect(task.state).toBe("failed");
+    expect(task.worktreePath).toBeUndefined();
+    expect(processPool.spawns).toHaveLength(0);
+
+    await expect(service.listEvents("task-1")).resolves.toEqual([
+      { taskId: "task-1", type: "task.queued" },
+      {
+        taskId: "task-1",
+        type: "task.failed",
+        errorCode: "WORKTREE_PROVISIONING_FAILED",
+        message: "git worktree add failed",
+      },
+    ]);
   });
 
   it("resumes an interrupted task in the same worktree", async () => {
