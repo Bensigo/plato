@@ -70,6 +70,10 @@ export interface RunnerStore {
   listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]>;
 }
 
+export interface RunnerStoreRecord {
+  tasks: RunnerTaskRecord[];
+}
+
 export interface WorktreeManager {
   createWorktree(taskId: string, repoPath: string): Promise<WorktreeAllocation>;
 }
