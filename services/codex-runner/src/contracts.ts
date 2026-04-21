@@ -40,6 +40,7 @@ export interface ManagedSession {
   sessionId: string;
   taskId: string;
   worktreePath: string;
+  pid?: number;
 }
 
 export interface WorktreeAllocation {
@@ -87,4 +88,8 @@ export interface ProcessPool {
 export interface LogStreamer {
   append(event: SessionEvent): Promise<void>;
   list(taskId: string): Promise<SessionEvent[]>;
+}
+
+export interface LogStreamRecord {
+  events: SessionEvent[];
 }
