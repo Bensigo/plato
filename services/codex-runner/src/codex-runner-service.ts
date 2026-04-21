@@ -1,4 +1,5 @@
 import type {
+  AgentSessionFactory,
   LogStreamer,
   ProcessPool,
   RunnerStore,
@@ -14,6 +15,7 @@ export interface CodexRunnerServiceDeps {
   worktreeManager: WorktreeManager;
   processPool: ProcessPool;
   logStreamer: LogStreamer;
+  agentSessionFactory?: AgentSessionFactory;
 }
 
 export class CodexRunnerService {
@@ -21,12 +23,14 @@ export class CodexRunnerService {
   readonly #worktreeManager: WorktreeManager;
   readonly #processPool: ProcessPool;
   readonly #logStreamer: LogStreamer;
+  readonly #agentSessionFactory?: AgentSessionFactory;
 
   constructor(deps: CodexRunnerServiceDeps) {
     this.#store = deps.store;
     this.#worktreeManager = deps.worktreeManager;
     this.#processPool = deps.processPool;
     this.#logStreamer = deps.logStreamer;
+    this.#agentSessionFactory = deps.agentSessionFactory;
   }
 
   async startTask(input: StartTaskInput): Promise<RunnerTaskRecord> {
@@ -168,7 +172,9 @@ export class CodexRunnerService {
       return;
     }
 
-    const session = await this.#processPool.spawn(nextTask, allocation);
+    const session = this.#agentSessionFactory
+      ? await this.#agentSessionFactory.create(this.#logStreamer).start(nextTask, allocation)
+      : await this.#processPool.spawn(nextTask, allocation);
     const runningTask: RunnerTaskRecord = {
       ...nextTask,
       state: "running",

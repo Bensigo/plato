@@ -86,6 +86,8 @@ class FakeProcessPool implements ProcessPool {
     return session;
   }
 
+  async attach(): Promise<void> {}
+
   async interrupt(sessionId: string): Promise<void> {
     this.interrupted.push(sessionId);
     if (this.#activeSessions > 0) {

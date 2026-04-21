@@ -53,6 +53,9 @@ export interface WorktreeAllocation {
 export interface SessionEvent {
   taskId: string;
   type:
+    | "session.started"
+    | "session.output"
+    | "session.exited"
     | "task.queued"
     | "task.started"
     | "task.failed"
@@ -63,6 +66,9 @@ export interface SessionEvent {
   worktreePath?: string;
   errorCode?: string;
   message?: string;
+  stream?: "stdout" | "stderr";
+  pid?: number;
+  exitCode?: number | null;
 }
 
 export interface RunnerStore {
@@ -79,9 +85,16 @@ export interface WorktreeManager {
   createWorktree(taskId: string, repoPath: string): Promise<WorktreeAllocation>;
 }
 
+export interface ProcessEventHandlers {
+  onStdoutLine?: (line: string) => Promise<void> | void;
+  onStderrLine?: (line: string) => Promise<void> | void;
+  onExit?: (exitCode: number | null) => Promise<void> | void;
+}
+
 export interface ProcessPool {
   hasCapacity(): boolean;
   spawn(task: RunnerTaskRecord, worktree: WorktreeAllocation): Promise<ManagedSession>;
+  attach(sessionId: string, handlers: ProcessEventHandlers): Promise<void>;
   interrupt(sessionId: string): Promise<void>;
 }
 
@@ -92,4 +105,12 @@ export interface LogStreamer {
 
 export interface LogStreamRecord {
   events: SessionEvent[];
+}
+
+export interface AgentSession {
+  start(task: RunnerTaskRecord, worktree: WorktreeAllocation): Promise<ManagedSession>;
+}
+
+export interface AgentSessionFactory {
+  create(logStreamer: LogStreamer): AgentSession;
 }
