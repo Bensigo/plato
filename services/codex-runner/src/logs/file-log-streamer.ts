@@ -9,15 +9,20 @@ const EMPTY_LOG: LogStreamRecord = {
 
 export class FileLogStreamer implements LogStreamer {
   readonly #filePath: string;
+  #writeChain: Promise<void> = Promise.resolve();
 
   constructor(filePath: string) {
     this.#filePath = filePath;
   }
 
   async append(event: SessionEvent): Promise<void> {
-    const record = await this.#readRecord();
-    record.events.push(event);
-    await this.#writeRecord(record);
+    this.#writeChain = this.#writeChain.then(async () => {
+      const record = await this.#readRecord();
+      record.events.push(event);
+      await this.#writeRecord(record);
+    });
+
+    await this.#writeChain;
   }
 
   async list(taskId: string): Promise<SessionEvent[]> {
