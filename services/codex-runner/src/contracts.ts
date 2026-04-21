@@ -53,6 +53,10 @@ export interface WorktreeAllocation {
 export interface SessionEvent {
   taskId: string;
   type:
+    | "runtime.checked"
+    | "runtime.install.started"
+    | "runtime.install.completed"
+    | "runtime.install.failed"
     | "session.started"
     | "session.output"
     | "session.exited"
@@ -113,4 +117,8 @@ export interface AgentSession {
 
 export interface AgentSessionFactory {
   create(logStreamer: LogStreamer): AgentSession;
+}
+
+export interface CodexRuntimeManager {
+  ensureReady(task: RunnerTaskRecord, logStreamer: LogStreamer): Promise<void>;
 }

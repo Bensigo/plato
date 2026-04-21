@@ -1,5 +1,6 @@
 import type {
   AgentSessionFactory,
+  CodexRuntimeManager,
   LogStreamer,
   ProcessPool,
   RunnerStore,
@@ -16,6 +17,7 @@ export interface CodexRunnerServiceDeps {
   processPool: ProcessPool;
   logStreamer: LogStreamer;
   agentSessionFactory?: AgentSessionFactory;
+  runtimeManager?: CodexRuntimeManager;
 }
 
 export class CodexRunnerService {
@@ -24,6 +26,7 @@ export class CodexRunnerService {
   readonly #processPool: ProcessPool;
   readonly #logStreamer: LogStreamer;
   readonly #agentSessionFactory?: AgentSessionFactory;
+  readonly #runtimeManager?: CodexRuntimeManager;
 
   constructor(deps: CodexRunnerServiceDeps) {
     this.#store = deps.store;
@@ -31,6 +34,7 @@ export class CodexRunnerService {
     this.#processPool = deps.processPool;
     this.#logStreamer = deps.logStreamer;
     this.#agentSessionFactory = deps.agentSessionFactory;
+    this.#runtimeManager = deps.runtimeManager;
   }
 
   async startTask(input: StartTaskInput): Promise<RunnerTaskRecord> {
@@ -137,6 +141,26 @@ export class CodexRunnerService {
     }
 
     let allocation: WorktreeAllocation;
+    try {
+      if (this.#runtimeManager) {
+        await this.#runtimeManager.ensureReady(nextTask, this.#logStreamer);
+      }
+    } catch (error) {
+      const failedTask: RunnerTaskRecord = {
+        ...nextTask,
+        state: "failed",
+      };
+
+      await this.#store.saveTask(failedTask);
+      await this.#logStreamer.append({
+        taskId: nextTask.taskId,
+        type: "task.failed",
+        errorCode: error instanceof Error && "code" in error ? String(error.code) : "CODEX_RUNTIME_FAILED",
+        message: error instanceof Error ? error.message : "Unknown Codex runtime failure",
+      });
+      return;
+    }
+
     try {
       allocation =
         nextTask.worktreePath === undefined

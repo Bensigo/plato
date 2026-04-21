@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { CodexRunnerService } from "../src/codex-runner-service.js";
 import {
+  type CodexRuntimeManager,
   WorktreeProvisioningError,
   type LogStreamer,
   ManagedSession,
@@ -96,6 +97,18 @@ class FakeProcessPool implements ProcessPool {
   }
 }
 
+class FakeRuntimeManager implements CodexRuntimeManager {
+  readonly calls: string[] = [];
+  failure?: Error;
+
+  async ensureReady(task: RunnerTaskRecord): Promise<void> {
+    this.calls.push(task.taskId);
+    if (this.failure) {
+      throw this.failure;
+    }
+  }
+}
+
 describe("CodexRunnerService", () => {
   it("starts a task immediately when process capacity is available", async () => {
     const store = new InMemoryRunnerStore();
@@ -127,6 +140,42 @@ describe("CodexRunnerService", () => {
         type: "task.started",
         sessionId: "session-1",
         worktreePath: "/repo/.plato/worktrees/task-1",
+      },
+    ]);
+  });
+
+  it("fails the task when codex runtime bootstrap fails", async () => {
+    const store = new InMemoryRunnerStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const processPool = new FakeProcessPool(1);
+    const runtimeManager = new FakeRuntimeManager();
+    runtimeManager.failure = new Error("codex install failed");
+    const service = new CodexRunnerService({
+      store,
+      logStreamer,
+      worktreeManager,
+      processPool,
+      runtimeManager,
+    });
+
+    const task = await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "Implement the runner",
+    });
+
+    expect(runtimeManager.calls).toEqual(["task-1"]);
+    expect(task.state).toBe("failed");
+    expect(processPool.spawns).toHaveLength(0);
+    expect(worktreeManager.allocations).toHaveLength(0);
+    await expect(service.listEvents("task-1")).resolves.toEqual([
+      { taskId: "task-1", type: "task.queued" },
+      {
+        taskId: "task-1",
+        type: "task.failed",
+        errorCode: "CODEX_RUNTIME_FAILED",
+        message: "codex install failed",
       },
     ]);
   });
