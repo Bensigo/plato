@@ -40,14 +40,16 @@ describe("CodexRunnerService with runtime components", () => {
     });
 
     expect(task.state).toBe("running");
-    await expect(service.listEvents("task-1")).resolves.toEqual([
-      { taskId: "task-1", type: "task.queued" },
-      {
+    await expect(service.listEvents("task-1")).resolves.toSatisfy((events) => {
+      expect(events).toHaveLength(2);
+      expect(events[0]).toEqual({ taskId: "task-1", type: "task.queued" });
+      expect(events[1]).toMatchObject({
         taskId: "task-1",
         type: "task.started",
-        sessionId: "session-1",
         worktreePath: `${repoPath}/.plato/worktrees/task-1`,
-      },
-    ]);
+      });
+      expect(events[1]?.sessionId).toMatch(/^[0-9a-f-]{36}$/i);
+      return true;
+    });
   });
 });

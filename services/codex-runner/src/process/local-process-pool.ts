@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import type { ManagedSession, ProcessPool, RunnerTaskRecord, WorktreeAllocation } from "../contracts.js";
@@ -18,7 +19,6 @@ export class LocalProcessPool implements ProcessPool {
   readonly #maxConcurrent: number;
   readonly #createCommand: LocalProcessPoolOptions["createCommand"];
   readonly #processes = new Map<string, ChildProcess>();
-  #sessionCounter = 0;
 
   constructor(options: LocalProcessPoolOptions) {
     this.#maxConcurrent = options.maxConcurrent;
@@ -34,7 +34,7 @@ export class LocalProcessPool implements ProcessPool {
       throw new Error("Process pool is at capacity");
     }
 
-    const sessionId = `session-${++this.#sessionCounter}`;
+    const sessionId = randomUUID();
     const command = this.#createCommand(task, worktree);
     const child = spawn(command.command, command.args ?? [], {
       cwd: command.cwd ?? worktree.worktreePath,

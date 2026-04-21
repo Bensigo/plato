@@ -55,6 +55,9 @@ describe("LocalProcessPool", () => {
 
     const session = await pool.spawn(buildTask("task-1"), buildAllocation("task-1", worktreePath));
 
+    expect(session.sessionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
     expect(session.pid).toBeTypeOf("number");
     expect(pool.hasCapacity()).toBe(false);
 
