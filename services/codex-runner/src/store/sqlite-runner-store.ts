@@ -1,6 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import type { RunnerStore, RunnerTaskDecomposition, RunnerTaskRecord, RunnerTaskState } from "../contracts.js";
+import type {
+  ContextArtifact,
+  ContextPackageRecord,
+  ContextSource,
+  RunnerStore,
+  RunnerTaskDecomposition,
+  RunnerTaskRecord,
+  RunnerTaskState,
+} from "../contracts.js";
 
 interface RunnerTaskRow {
   task_id: string;
@@ -16,6 +24,13 @@ interface RunnerTaskRow {
   pending_approval_requested_action: string | null;
   pending_approval_reason: string | null;
   pending_approval_session_id: string | null;
+}
+
+interface ContextPackageRow {
+  task_id: string;
+  summary: string | null;
+  sources_json: string;
+  artifacts_json: string;
 }
 
 export class SqliteRunnerStore implements RunnerStore {
@@ -156,6 +171,67 @@ export class SqliteRunnerStore implements RunnerStore {
       .all(parentTaskId) as unknown as RunnerTaskRow[];
 
     return rows.map(mapRunnerTaskRow);
+  }
+
+  async saveContextPackage(contextPackage: ContextPackageRecord): Promise<void> {
+    this.#connection
+      .prepare(`
+        INSERT INTO runner_task_context_packages (
+          task_id,
+          summary,
+          sources_json,
+          artifacts_json
+        ) VALUES (?, ?, ?, ?)
+        ON CONFLICT(task_id) DO UPDATE SET
+          summary = excluded.summary,
+          sources_json = excluded.sources_json,
+          artifacts_json = excluded.artifacts_json,
+          updated_at = CURRENT_TIMESTAMP
+      `)
+      .run(
+        contextPackage.taskId,
+        contextPackage.summary ?? null,
+        JSON.stringify(contextPackage.sources),
+        JSON.stringify(contextPackage.artifacts),
+      );
+  }
+
+  async deleteContextPackage(taskId: string): Promise<void> {
+    this.#connection
+      .prepare(
+        `
+          DELETE FROM runner_task_context_packages
+          WHERE task_id = ?
+        `,
+      )
+      .run(taskId);
+  }
+
+  async getContextPackage(taskId: string): Promise<ContextPackageRecord | undefined> {
+    const row = this.#connection
+      .prepare(
+        `
+          SELECT
+            task_id,
+            summary,
+            sources_json,
+            artifacts_json
+          FROM runner_task_context_packages
+          WHERE task_id = ?
+        `,
+      )
+      .get(taskId) as ContextPackageRow | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      taskId: row.task_id,
+      summary: row.summary ?? undefined,
+      sources: JSON.parse(row.sources_json) as ContextSource[],
+      artifacts: JSON.parse(row.artifacts_json) as ContextArtifact[],
+    };
   }
 }
 

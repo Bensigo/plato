@@ -25,6 +25,7 @@ export interface StartTaskInput {
   prompt: string;
   priority?: number;
   decomposition?: RunnerTaskDecomposition;
+  contextPackage?: TaskContextPackageInput;
 }
 
 export interface PendingApprovalRecord {
@@ -46,6 +47,41 @@ export type RunnerTaskDecompositionKind = "subtask";
 export interface RunnerTaskDecomposition {
   kind: RunnerTaskDecompositionKind;
   parentTaskId: string;
+}
+
+export type ContextSourceKind =
+  | "repo_file"
+  | "git_diff"
+  | "task_brief"
+  | "session_summary";
+
+export interface ContextSource {
+  sourceId: string;
+  kind: ContextSourceKind;
+  label: string;
+  uri: string;
+  summary?: string;
+}
+
+export type ContextArtifactKind = "summary" | "file_excerpt" | "patch";
+
+export interface ContextArtifact {
+  artifactId: string;
+  kind: ContextArtifactKind;
+  label: string;
+  mimeType: string;
+  content: string;
+  summary?: string;
+}
+
+export interface TaskContextPackageInput {
+  summary?: string;
+  sources: ContextSource[];
+  artifacts: ContextArtifact[];
+}
+
+export interface ContextPackageRecord extends TaskContextPackageInput {
+  taskId: string;
 }
 
 export interface RunnerTaskRecord {
@@ -148,6 +184,9 @@ export interface RunnerStore {
   getTask(taskId: string): Promise<RunnerTaskRecord | undefined>;
   listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]>;
   listChildTasks(parentTaskId: string): Promise<RunnerTaskRecord[]>;
+  saveContextPackage(contextPackage: ContextPackageRecord): Promise<void>;
+  deleteContextPackage(taskId: string): Promise<void>;
+  getContextPackage(taskId: string): Promise<ContextPackageRecord | undefined>;
 }
 
 export interface SessionStore {

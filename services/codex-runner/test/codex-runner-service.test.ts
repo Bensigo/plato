@@ -5,6 +5,9 @@ import {
   type AgentSession,
   type AgentSessionFactory,
   type CodexRuntimeManager,
+  type ContextArtifact,
+  type ContextPackageRecord,
+  type ContextSource,
   WorktreeProvisioningError,
   type LogStreamer,
   ManagedSession,
@@ -24,6 +27,7 @@ import {
 
 class InMemoryRunnerStore implements RunnerStore {
   readonly #tasks = new Map<string, RunnerTaskRecord>();
+  readonly #contextPackages = new Map<string, ContextPackageRecord>();
 
   async saveTask(task: RunnerTaskRecord): Promise<void> {
     this.#tasks.set(task.taskId, task);
@@ -41,6 +45,18 @@ class InMemoryRunnerStore implements RunnerStore {
     return [...this.#tasks.values()].filter(
       (task) => task.decomposition?.parentTaskId === parentTaskId,
     );
+  }
+
+  async saveContextPackage(contextPackage: ContextPackageRecord): Promise<void> {
+    this.#contextPackages.set(contextPackage.taskId, contextPackage);
+  }
+
+  async deleteContextPackage(taskId: string): Promise<void> {
+    this.#contextPackages.delete(taskId);
+  }
+
+  async getContextPackage(taskId: string): Promise<ContextPackageRecord | undefined> {
+    return this.#contextPackages.get(taskId);
   }
 }
 
@@ -182,6 +198,23 @@ describe("CodexRunnerService", () => {
     ...overrides,
   });
 
+  const buildContextSource = (): ContextSource => ({
+    kind: "repo_file",
+    sourceId: "source-1",
+    label: "Touched file",
+    uri: "file:///repo/src/index.ts",
+    summary: "Contains the primary entry point.",
+  });
+
+  const buildContextArtifact = (): ContextArtifact => ({
+    artifactId: "artifact-1",
+    kind: "summary",
+    label: "Implementation brief",
+    mimeType: "text/markdown",
+    content: "Focus on isolated worktree startup.",
+    summary: "Short implementation brief.",
+  });
+
   it("starts a task immediately when process capacity is available", async () => {
     const store = new InMemoryRunnerStore();
     const sessionStore = new InMemorySessionStore();
@@ -252,6 +285,65 @@ describe("CodexRunnerService", () => {
         message: "codex install failed",
       },
     ]);
+  });
+
+  it("persists a context package alongside the task admission record", async () => {
+    const store = new InMemoryRunnerStore();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore: new InMemorySessionStore(),
+      logStreamer: new InMemoryLogStreamer(),
+      worktreeManager: new FakeWorktreeManager(),
+      maxConcurrentTasks: 0,
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "Use context",
+      contextPackage: {
+        summary: "Execution context summary",
+        sources: [buildContextSource()],
+        artifacts: [buildContextArtifact()],
+      },
+    });
+
+    await expect(service.getContextPackage("task-1")).resolves.toEqual({
+      taskId: "task-1",
+      summary: "Execution context summary",
+      sources: [buildContextSource()],
+      artifacts: [buildContextArtifact()],
+    });
+  });
+
+  it("clears stale context when a task is re-admitted without a context package", async () => {
+    const store = new InMemoryRunnerStore();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore: new InMemorySessionStore(),
+      logStreamer: new InMemoryLogStreamer(),
+      worktreeManager: new FakeWorktreeManager(),
+      maxConcurrentTasks: 0,
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "Use context",
+      contextPackage: {
+        summary: "Execution context summary",
+        sources: [buildContextSource()],
+        artifacts: [buildContextArtifact()],
+      },
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "Retry without context",
+    });
+
+    await expect(service.getContextPackage("task-1")).resolves.toBeUndefined();
   });
 
   it("creates a subtask with a durable parent-child relationship", async () => {
