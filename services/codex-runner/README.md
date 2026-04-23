@@ -44,6 +44,7 @@ The runner treats logs as structured events first, text second. Current events i
 
 - runtime checks and installation events
 - task queue, start, interrupt, resume, complete, and failure events
+- task reconciliation events emitted during startup recovery
 - session start, output, and exit events
 
 That event stream is the service's audit trail. Other parts of Plato should be able to reconstruct what happened to a task without scraping terminal text.
@@ -58,6 +59,12 @@ The longer-term role of this workspace is to be one of Plato's core execution se
 - adapters around side effects so scheduling and lifecycle rules remain unit-testable
 
 As the service grows, keep the domain language centered on `task`, `session`, `worktree`, `interrupt`, and `resume`. Those concepts are already the backbone of the implementation and should stay visible in the public API.
+
+## Startup Recovery
+
+`CodexRunnerService.reconcileRunningTasks()` is the startup recovery entrypoint for durable runner state. It scans persisted `running` tasks, checks the active session record, and reconciles orphaned tasks with missing or terminal sessions into `interrupted` or `failed`.
+
+Recovery preserves the stored `worktreePath`, clears the stale active session pointer, and appends a `task.reconciled` event so operators can see that the state changed during reconciliation rather than during normal session exit handling.
 
 ## Development Notes
 

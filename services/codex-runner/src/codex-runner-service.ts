@@ -125,77 +125,93 @@ export class CodexRunnerService {
     return this.#logStreamer.list(taskId);
   }
 
-  async #scheduleQueuedTasks(): Promise<void> {
-    if (!(await this.#hasCapacity())) {
-      return;
-    }
-
-    const queuedTasks = await this.#store.listTasksByState("queued");
-    const nextTask = queuedTasks
+  async reconcileRunningTasks(): Promise<RunnerTaskRecord[]> {
+    const runningTasks = (await this.#store.listTasksByState("running"))
       .slice()
-      .sort((left, right) => right.priority - left.priority || left.taskId.localeCompare(right.taskId))[0];
+      .sort((left, right) => left.taskId.localeCompare(right.taskId));
+    const reconciled: RunnerTaskRecord[] = [];
 
-    if (!nextTask) {
-      return;
-    }
-
-    let allocation: WorktreeAllocation;
-    try {
-      if (this.#runtimeManager) {
-        await this.#runtimeManager.ensureReady(nextTask, this.#logStreamer);
+    for (const task of runningTasks) {
+      const nextTask = await this.#reconcileRunningTask(task);
+      if (nextTask) {
+        reconciled.push(nextTask);
       }
-    } catch (error) {
-      const failedTask: RunnerTaskRecord = {
-        ...nextTask,
-        state: "failed",
-      };
-
-      await this.#store.saveTask(failedTask);
-      await this.#logStreamer.append({
-        taskId: nextTask.taskId,
-        type: "task.failed",
-        errorCode: error instanceof Error && "code" in error ? String(error.code) : "CODEX_RUNTIME_FAILED",
-        message: error instanceof Error ? error.message : "Unknown Codex runtime failure",
-      });
-      return;
     }
 
-    try {
-      allocation =
-        nextTask.worktreePath === undefined
-          ? await this.#worktreeManager.createWorktree(nextTask.taskId, nextTask.repoPath)
-          : {
-              taskId: nextTask.taskId,
-              repoPath: nextTask.repoPath,
-              branchName: `plato/task-${nextTask.taskId}`,
-              worktreePath: nextTask.worktreePath,
-            };
-    } catch (error) {
-      const provisioningError =
-        error instanceof WorktreeProvisioningError
-          ? error
-          : new WorktreeProvisioningError(
-              error instanceof Error ? error.message : "Unknown worktree provisioning failure",
-              nextTask.taskId,
-              nextTask.repoPath,
-            );
+    await this.#scheduleQueuedTasks();
 
-      const failedTask: RunnerTaskRecord = {
-        ...nextTask,
-        state: "failed",
-      };
+    return reconciled;
+  }
 
-      await this.#store.saveTask(failedTask);
-      await this.#logStreamer.append({
-        taskId: nextTask.taskId,
-        type: "task.failed",
-        errorCode: provisioningError.code,
-        message: provisioningError.message,
-      });
-      return;
+  async #scheduleQueuedTasks(): Promise<void> {
+    while (await this.#hasCapacity()) {
+      const queuedTasks = await this.#store.listTasksByState("queued");
+      const nextTask = queuedTasks
+        .slice()
+        .sort((left, right) => right.priority - left.priority || left.taskId.localeCompare(right.taskId))[0];
+
+      if (!nextTask) {
+        return;
+      }
+
+      let allocation: WorktreeAllocation;
+      try {
+        if (this.#runtimeManager) {
+          await this.#runtimeManager.ensureReady(nextTask, this.#logStreamer);
+        }
+      } catch (error) {
+        const failedTask: RunnerTaskRecord = {
+          ...nextTask,
+          state: "failed",
+        };
+
+        await this.#store.saveTask(failedTask);
+        await this.#logStreamer.append({
+          taskId: nextTask.taskId,
+          type: "task.failed",
+          errorCode: error instanceof Error && "code" in error ? String(error.code) : "CODEX_RUNTIME_FAILED",
+          message: error instanceof Error ? error.message : "Unknown Codex runtime failure",
+        });
+        continue;
+      }
+
+      try {
+        allocation =
+          nextTask.worktreePath === undefined
+            ? await this.#worktreeManager.createWorktree(nextTask.taskId, nextTask.repoPath)
+            : {
+                taskId: nextTask.taskId,
+                repoPath: nextTask.repoPath,
+                branchName: `plato/task-${nextTask.taskId}`,
+                worktreePath: nextTask.worktreePath,
+              };
+      } catch (error) {
+        const provisioningError =
+          error instanceof WorktreeProvisioningError
+            ? error
+            : new WorktreeProvisioningError(
+                error instanceof Error ? error.message : "Unknown worktree provisioning failure",
+                nextTask.taskId,
+                nextTask.repoPath,
+              );
+
+        const failedTask: RunnerTaskRecord = {
+          ...nextTask,
+          state: "failed",
+        };
+
+        await this.#store.saveTask(failedTask);
+        await this.#logStreamer.append({
+          taskId: nextTask.taskId,
+          type: "task.failed",
+          errorCode: provisioningError.code,
+          message: provisioningError.message,
+        });
+        continue;
+      }
+
+      await this.#startManagedTask(nextTask, allocation, "task.started");
     }
-
-    await this.#startManagedTask(nextTask, allocation, "task.started");
   }
 
   async #startManagedTask(
@@ -280,6 +296,95 @@ export class CodexRunnerService {
           },
     );
     await this.#scheduleQueuedTasks();
+  }
+
+  async #reconcileRunningTask(task: RunnerTaskRecord): Promise<RunnerTaskRecord | undefined> {
+    const activeSessionId = task.activeSessionId;
+    if (!activeSessionId) {
+      return this.#persistRecoveredTask(task, {
+        recoveredState: "interrupted",
+        errorCode: "TASK_RECOVERY_SESSION_MISSING",
+        message: "Recovered running task without an active session reference",
+      });
+    }
+
+    const session = await this.#sessionStore.getSession(activeSessionId);
+    if (!session || session.taskId !== task.taskId) {
+      return this.#persistRecoveredTask(task, {
+        sessionId: activeSessionId,
+        recoveredState: "interrupted",
+        errorCode: "TASK_RECOVERY_SESSION_MISSING",
+        message: "Recovered running task without a persisted active session",
+      });
+    }
+
+    if (session.state === "running") {
+      return this.#persistRecoveredTask(task, {
+        sessionId: session.sessionId,
+        recoveredState: "interrupted",
+        errorCode: "TASK_RECOVERY_SESSION_ORPHANED",
+        message: "Recovered running task from a persisted running session after startup",
+      });
+    }
+
+    if (session.state === "failed") {
+      return this.#persistRecoveredTask(task, {
+        sessionId: session.sessionId,
+        recoveredState: "failed",
+        errorCode: "TASK_RECOVERY_SESSION_FAILED",
+        message: "Recovered running task from failed session state",
+        exitCode: session.exitCode,
+      });
+    }
+
+    if (session.state === "interrupted") {
+      return this.#persistRecoveredTask(task, {
+        sessionId: session.sessionId,
+        recoveredState: "interrupted",
+        errorCode: "TASK_RECOVERY_SESSION_INTERRUPTED",
+        message: "Recovered running task from interrupted session state",
+        exitCode: session.exitCode,
+      });
+    }
+
+    return this.#persistRecoveredTask(task, {
+      sessionId: session.sessionId,
+      recoveredState: "failed",
+      errorCode: "TASK_RECOVERY_SESSION_COMPLETED",
+      message: "Recovered running task from completed session state without a terminal task transition",
+      exitCode: session.exitCode,
+    });
+  }
+
+  async #persistRecoveredTask(
+    task: RunnerTaskRecord,
+    recovery: {
+      sessionId?: string;
+      recoveredState: "interrupted" | "failed";
+      errorCode: string;
+      message: string;
+      exitCode?: number | null;
+    },
+  ): Promise<RunnerTaskRecord> {
+    const reconciledTask: RunnerTaskRecord = {
+      ...task,
+      state: recovery.recoveredState,
+      activeSessionId: undefined,
+    };
+
+    await this.#store.saveTask(reconciledTask);
+    await this.#logStreamer.append({
+      taskId: task.taskId,
+      type: "task.reconciled",
+      sessionId: recovery.sessionId,
+      worktreePath: task.worktreePath,
+      recoveredState: recovery.recoveredState,
+      errorCode: recovery.errorCode,
+      message: recovery.message,
+      exitCode: recovery.exitCode,
+    });
+
+    return reconciledTask;
   }
 
   async #hasCapacity(): Promise<boolean> {
