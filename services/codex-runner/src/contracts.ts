@@ -26,6 +26,20 @@ export interface StartTaskInput {
   priority?: number;
 }
 
+export interface PendingApprovalRecord {
+  approvalRequestId: string;
+  requestedAction: string;
+  reason: string;
+  sessionId: string;
+}
+
+export interface RequestTaskApprovalInput {
+  approvalRequestId: string;
+  requestedAction: string;
+  reason: string;
+  sessionId?: string;
+}
+
 export interface RunnerTaskRecord {
   taskId: string;
   repoPath: string;
@@ -34,10 +48,12 @@ export interface RunnerTaskRecord {
   state: RunnerTaskState;
   worktreePath?: string;
   activeSessionId?: string;
+  pendingApproval?: PendingApprovalRecord;
 }
 
 export type RunnerSessionState =
   | "running"
+  | "awaiting_approval"
   | "completed"
   | "failed"
   | "interrupted";
@@ -52,6 +68,7 @@ export interface ManagedSession {
 export interface RunnerSessionRecord extends ManagedSession {
   state: RunnerSessionState;
   exitCode?: number | null;
+  pendingApproval?: PendingApprovalRecord;
 }
 
 export interface WorktreeAllocation {
@@ -73,6 +90,9 @@ export interface SessionEvent {
     | "session.exited"
     | "task.queued"
     | "task.started"
+    | "task.awaiting_approval"
+    | "task.approval.granted"
+    | "task.approval.rejected"
     | "task.failed"
     | "task.interrupted"
     | "task.completed"
@@ -81,6 +101,8 @@ export interface SessionEvent {
   sessionId?: string;
   worktreePath?: string;
   recoveredState?: "interrupted" | "failed";
+  approvalRequestId?: string;
+  requestedAction?: string;
   errorCode?: string;
   message?: string;
   stream?: "stdout" | "stderr";

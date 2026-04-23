@@ -3,6 +3,7 @@ import type {
   AgentSessionFactory,
   CodexRuntimeManager,
   LogStreamer,
+  RequestTaskApprovalInput,
   RunnerStore,
   RunnerSessionRecord,
   RunnerTaskRecord,
@@ -98,6 +99,103 @@ export class CodexRunnerService {
       throw new Error(`Task ${taskId} cannot be resumed without a worktree`);
     }
 
+    return this.#resumeTaskWithAllocation(task);
+  }
+
+  async requestTaskApproval(taskId: string, input: RequestTaskApprovalInput): Promise<RunnerTaskRecord> {
+    const task = await this.#requireTask(taskId);
+    const sessionId = input.sessionId ?? task.activeSessionId;
+    if (task.state !== "running" || !sessionId) {
+      throw new Error(`Task ${taskId} is not running with an active session`);
+    }
+
+    const pendingApproval = {
+      approvalRequestId: input.approvalRequestId,
+      requestedAction: input.requestedAction,
+      reason: input.reason,
+      sessionId,
+    };
+    const awaitingApprovalTask: RunnerTaskRecord = {
+      ...task,
+      state: "awaiting_approval",
+      pendingApproval,
+    };
+
+    await this.#store.saveTask(awaitingApprovalTask);
+    await this.#saveSessionCheckpoint(task, {
+      state: "awaiting_approval",
+      pendingApproval,
+    });
+    await this.#logStreamer.append({
+      taskId,
+      type: "task.awaiting_approval",
+      sessionId,
+      worktreePath: task.worktreePath,
+      approvalRequestId: pendingApproval.approvalRequestId,
+      requestedAction: pendingApproval.requestedAction,
+      message: pendingApproval.reason,
+    });
+
+    return awaitingApprovalTask;
+  }
+
+  async approveTaskAction(taskId: string): Promise<RunnerTaskRecord> {
+    const task = await this.#requireApprovalTask(taskId);
+    const clearedTask: RunnerTaskRecord = {
+      ...task,
+      pendingApproval: undefined,
+    };
+
+    await this.#logStreamer.append({
+      taskId,
+      type: "task.approval.granted",
+      sessionId: task.pendingApproval.sessionId,
+      worktreePath: task.worktreePath,
+      approvalRequestId: task.pendingApproval.approvalRequestId,
+      requestedAction: task.pendingApproval.requestedAction,
+    });
+
+    return this.#resumeTaskFromCheckpoint(clearedTask);
+  }
+
+  async rejectTaskAction(taskId: string, reason: string): Promise<RunnerTaskRecord> {
+    const task = await this.#requireApprovalTask(taskId);
+    const failedTask: RunnerTaskRecord = {
+      ...task,
+      state: "failed",
+      activeSessionId: undefined,
+      pendingApproval: undefined,
+    };
+
+    await this.#store.saveTask(failedTask);
+    await this.#saveSessionCheckpoint(task, {
+      state: "failed",
+      pendingApproval: task.pendingApproval,
+      exitCode: null,
+    });
+    await this.#logStreamer.append({
+      taskId,
+      type: "task.approval.rejected",
+      sessionId: task.pendingApproval.sessionId,
+      worktreePath: task.worktreePath,
+      approvalRequestId: task.pendingApproval.approvalRequestId,
+      requestedAction: task.pendingApproval.requestedAction,
+      message: reason,
+    });
+    await this.#logStreamer.append({
+      taskId,
+      type: "task.failed",
+      sessionId: task.pendingApproval.sessionId,
+      worktreePath: task.worktreePath,
+      errorCode: "TASK_APPROVAL_REJECTED",
+      message: reason,
+    });
+    await this.#scheduleQueuedTasks();
+
+    return failedTask;
+  }
+
+  async #resumeTaskWithAllocation(task: RunnerTaskRecord): Promise<RunnerTaskRecord> {
     if (!(await this.#hasCapacity())) {
       const queuedTask: RunnerTaskRecord = {
         ...task,
@@ -112,7 +210,7 @@ export class CodexRunnerService {
       taskId: task.taskId,
       repoPath: task.repoPath,
       branchName: `plato/task-${task.taskId}`,
-      worktreePath: task.worktreePath,
+      worktreePath: task.worktreePath!,
     };
     return this.#startManagedTask(task, allocation, "task.resumed");
   }
@@ -327,6 +425,10 @@ export class CodexRunnerService {
       });
     }
 
+    if (session.state === "awaiting_approval") {
+      return undefined;
+    }
+
     if (session.state === "failed") {
       return this.#persistRecoveredTask(task, {
         sessionId: session.sessionId,
@@ -387,9 +489,53 @@ export class CodexRunnerService {
     return reconciledTask;
   }
 
+  async #resumeTaskFromCheckpoint(task: RunnerTaskRecord): Promise<RunnerTaskRecord> {
+    const resumedTask: RunnerTaskRecord = {
+      ...task,
+      state: "interrupted",
+    };
+
+    await this.#store.saveTask(resumedTask);
+    return this.resumeTask(task.taskId);
+  }
+
+  async #saveSessionCheckpoint(
+    task: RunnerTaskRecord,
+    update: Pick<RunnerSessionRecord, "state" | "pendingApproval"> &
+      Partial<Pick<RunnerSessionRecord, "exitCode">>,
+  ): Promise<void> {
+    if (!task.activeSessionId) {
+      return;
+    }
+
+    const current = await this.#sessionStore.getSession(task.activeSessionId);
+    await this.#sessionStore.saveSession({
+      sessionId: task.activeSessionId,
+      taskId: task.taskId,
+      worktreePath: task.worktreePath ?? current?.worktreePath ?? "",
+      pid: current?.pid,
+      state: update.state,
+      exitCode: update.exitCode ?? current?.exitCode,
+      pendingApproval: update.pendingApproval,
+    });
+  }
+
   async #hasCapacity(): Promise<boolean> {
     const runningTasks = await this.#store.listTasksByState("running");
     return runningTasks.length < this.#maxConcurrentTasks;
+  }
+
+  async #requireApprovalTask(
+    taskId: string,
+  ): Promise<RunnerTaskRecord & { pendingApproval: NonNullable<RunnerTaskRecord["pendingApproval"]> }> {
+    const task = await this.#requireTask(taskId);
+    if (task.state !== "awaiting_approval" || !task.pendingApproval) {
+      throw new Error(`Task ${taskId} is not awaiting approval`);
+    }
+
+    return task as RunnerTaskRecord & {
+      pendingApproval: NonNullable<RunnerTaskRecord["pendingApproval"]>;
+    };
   }
 
   async #requireTask(taskId: string): Promise<RunnerTaskRecord> {
