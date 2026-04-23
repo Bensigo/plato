@@ -1,8 +1,8 @@
 import type {
+  AgentSession,
   AgentSessionFactory,
   CodexRuntimeManager,
   LogStreamer,
-  ProcessPool,
   RunnerStore,
   RunnerSessionRecord,
   RunnerTaskRecord,
@@ -12,35 +12,36 @@ import type {
   WorktreeManager,
 } from "./contracts.js";
 import { WorktreeProvisioningError } from "./contracts.js";
-import { ProcessBackedAgentSessionFactory } from "./session/process-backed-agent-session.js";
+import { CodexSdkBackedAgentSessionFactory } from "./session/codex-sdk-backed-agent-session.js";
 
 export interface CodexRunnerServiceDeps {
   store: RunnerStore;
   sessionStore: SessionStore;
   worktreeManager: WorktreeManager;
-  processPool: ProcessPool;
   logStreamer: LogStreamer;
   agentSessionFactory?: AgentSessionFactory;
   runtimeManager?: CodexRuntimeManager;
+  maxConcurrentTasks?: number;
 }
 
 export class CodexRunnerService {
   readonly #store: RunnerStore;
   readonly #sessionStore: SessionStore;
   readonly #worktreeManager: WorktreeManager;
-  readonly #processPool: ProcessPool;
   readonly #logStreamer: LogStreamer;
-  readonly #agentSessionFactory?: AgentSessionFactory;
+  readonly #agentSession: AgentSession;
   readonly #runtimeManager?: CodexRuntimeManager;
+  readonly #maxConcurrentTasks: number;
 
   constructor(deps: CodexRunnerServiceDeps) {
     this.#store = deps.store;
     this.#sessionStore = deps.sessionStore;
     this.#worktreeManager = deps.worktreeManager;
-    this.#processPool = deps.processPool;
     this.#logStreamer = deps.logStreamer;
-    this.#agentSessionFactory = deps.agentSessionFactory;
+    const sessionFactory = deps.agentSessionFactory ?? new CodexSdkBackedAgentSessionFactory();
+    this.#agentSession = sessionFactory.create(deps.logStreamer);
     this.#runtimeManager = deps.runtimeManager;
+    this.#maxConcurrentTasks = deps.maxConcurrentTasks ?? 1;
   }
 
   async startTask(input: StartTaskInput): Promise<RunnerTaskRecord> {
@@ -82,7 +83,7 @@ export class CodexRunnerService {
       worktreePath: interruptedTask.worktreePath,
     });
     if (task.activeSessionId) {
-      await this.#processPool.interrupt(task.activeSessionId);
+      await this.#agentSession.interrupt(task.activeSessionId);
     }
     await this.#scheduleQueuedTasks();
   }
@@ -97,7 +98,7 @@ export class CodexRunnerService {
       throw new Error(`Task ${taskId} cannot be resumed without a worktree`);
     }
 
-    if (!this.#processPool.hasCapacity()) {
+    if (!(await this.#hasCapacity())) {
       const queuedTask: RunnerTaskRecord = {
         ...task,
         state: "queued",
@@ -125,7 +126,7 @@ export class CodexRunnerService {
   }
 
   async #scheduleQueuedTasks(): Promise<void> {
-    if (!this.#processPool.hasCapacity()) {
+    if (!(await this.#hasCapacity())) {
       return;
     }
 
@@ -202,8 +203,7 @@ export class CodexRunnerService {
     allocation: WorktreeAllocation,
     eventType: "task.started" | "task.resumed",
   ): Promise<RunnerTaskRecord> {
-    const sessionFactory = this.#agentSessionFactory ?? new ProcessBackedAgentSessionFactory(this.#processPool);
-    const session = await sessionFactory.create(this.#logStreamer).start(task, allocation, {
+    const session = await this.#agentSession.start(task, allocation, {
       onExit: async (exitCode) => {
         await this.#handleSessionExit(task.taskId, session.sessionId, allocation.worktreePath, exitCode);
       },
@@ -280,6 +280,11 @@ export class CodexRunnerService {
           },
     );
     await this.#scheduleQueuedTasks();
+  }
+
+  async #hasCapacity(): Promise<boolean> {
+    const runningTasks = await this.#store.listTasksByState("running");
+    return runningTasks.length < this.#maxConcurrentTasks;
   }
 
   async #requireTask(taskId: string): Promise<RunnerTaskRecord> {

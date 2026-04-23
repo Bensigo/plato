@@ -3,14 +3,15 @@ import { join } from "node:path";
 
 import { CodexRunnerService } from "../src/codex-runner-service.js";
 import type {
+  AgentSession,
+  AgentSessionFactory,
   LogStreamer,
   ManagedSession,
-  ProcessPool,
   RunnerSessionRecord,
+  RunnerTaskRecord,
   SessionEvent,
   SessionStore,
   WorktreeAllocation,
-  RunnerTaskRecord,
 } from "../src/contracts.js";
 import { FileRunnerStore } from "../src/store/file-runner-store.js";
 import { GitWorktreeManager } from "../src/worktree/git-worktree-manager.js";
@@ -46,33 +47,21 @@ class InMemorySessionStore implements SessionStore {
   }
 }
 
-class FakeProcessPool implements ProcessPool {
-  readonly spawns: ManagedSession[] = [];
-  #activeSessions = 0;
-
-  constructor(private readonly capacity: number) {}
-
-  hasCapacity(): boolean {
-    return this.#activeSessions < this.capacity;
-  }
-
-  async spawn(task: RunnerTaskRecord, worktree: WorktreeAllocation): Promise<ManagedSession> {
-    this.#activeSessions += 1;
-    const session = {
-      sessionId: `session-${this.spawns.length + 1}`,
+class FakeAgentSession implements AgentSession {
+  async start(task: RunnerTaskRecord, worktree: WorktreeAllocation): Promise<ManagedSession> {
+    return {
+      sessionId: "session-1",
       taskId: task.taskId,
       worktreePath: worktree.worktreePath,
     };
-    this.spawns.push(session);
-    return session;
   }
 
-  async attach(): Promise<void> {}
+  async interrupt(): Promise<void> {}
+}
 
-  async interrupt(): Promise<void> {
-    if (this.#activeSessions > 0) {
-      this.#activeSessions -= 1;
-    }
+class FakeAgentSessionFactory implements AgentSessionFactory {
+  create(): AgentSession {
+    return new FakeAgentSession();
   }
 }
 
@@ -92,8 +81,8 @@ describe("CodexRunnerService with real components", () => {
       store: new FileRunnerStore(join(storeDir, "runner-store.json")),
       sessionStore: new InMemorySessionStore(),
       worktreeManager: new GitWorktreeManager(),
-      processPool: new FakeProcessPool(1),
       logStreamer: new InMemoryLogStreamer(),
+      agentSessionFactory: new FakeAgentSessionFactory(),
     });
 
     const task = await service.startTask({

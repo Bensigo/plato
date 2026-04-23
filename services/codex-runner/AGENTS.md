@@ -40,7 +40,7 @@ Be cautious about changes that make lifecycle state implicit, hide failures behi
 
 - Use TDD for new runner behavior.
 - Start with service-level unit tests over `CodexRunnerService`.
-- Prefer in-memory fakes for `RunnerStore`, `ProcessPool`, `WorktreeManager`, and `LogStreamer`.
+- Prefer in-memory fakes for `RunnerStore`, `SessionStore`, `WorktreeManager`, `AgentSession`, and `LogStreamer`.
 - Add integration tests only after the domain contract is stable.
 
 ## Code Style
