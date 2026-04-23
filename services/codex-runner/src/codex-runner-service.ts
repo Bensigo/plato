@@ -63,6 +63,14 @@ export class CodexRunnerService {
     };
 
     await this.#store.saveTask(task);
+    if (input.contextPackage) {
+      await this.#store.saveContextPackage({
+        taskId: task.taskId,
+        summary: input.contextPackage.summary,
+        sources: input.contextPackage.sources,
+        artifacts: input.contextPackage.artifacts,
+      });
+    }
     await this.#logStreamer.append({ taskId: task.taskId, type: "task.queued" });
     await this.#scheduleQueuedTasks();
 
@@ -238,6 +246,10 @@ export class CodexRunnerService {
   async listSubtasks(taskId: string): Promise<RunnerTaskRecord[]> {
     await this.#requireTask(taskId);
     return this.#store.listChildTasks(taskId);
+  }
+
+  async getContextPackage(taskId: string) {
+    return this.#store.getContextPackage(taskId);
   }
 
   async listEvents(taskId: string) {

@@ -33,6 +33,16 @@ export function bootstrapCodexRunnerSchema(connection: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS runner_tasks_state_idx
       ON runner_tasks (state);
 
+    CREATE TABLE IF NOT EXISTS runner_task_context_packages (
+      task_id TEXT PRIMARY KEY,
+      summary TEXT,
+      sources_json TEXT NOT NULL,
+      artifacts_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(task_id) REFERENCES runner_tasks(task_id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS runner_sessions (
       session_id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL,

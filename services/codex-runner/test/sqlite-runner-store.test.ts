@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { RunnerTaskRecord } from "../src/contracts.js";
+import type { ContextPackageRecord, RunnerTaskRecord } from "../src/contracts.js";
 import { openCodexRunnerPersistence } from "../src/store/sqlite-runner-persistence.js";
 import { cleanupDir, createTempDir } from "./helpers/git.js";
 
@@ -131,4 +131,74 @@ describe("SqliteRunnerStore", () => {
 
     persistence.close();
   });
+
+  it("persists context packages across store instances", async () => {
+    const tempDir = await createTempDir("codex-runner-store-");
+    tempDirs.push(tempDir);
+    const filePath = `${tempDir}/runner.sqlite`;
+
+    const firstPersistence = openCodexRunnerPersistence({ filePath });
+    await firstPersistence.store.saveTask(buildTask("task-1", "queued"));
+    await firstPersistence.store.saveContextPackage(buildContextPackage("task-1"));
+    firstPersistence.close();
+
+    const secondPersistence = openCodexRunnerPersistence({ filePath });
+    await expect(secondPersistence.store.getContextPackage("task-1")).resolves.toEqual(
+      buildContextPackage("task-1"),
+    );
+    secondPersistence.close();
+  });
+
+  it("updates an existing context package instead of duplicating it", async () => {
+    const tempDir = await createTempDir("codex-runner-store-");
+    tempDirs.push(tempDir);
+    const persistence = openCodexRunnerPersistence({
+      filePath: `${tempDir}/runner.sqlite`,
+    });
+
+    await persistence.store.saveTask(buildTask("task-1", "queued"));
+    await persistence.store.saveContextPackage(buildContextPackage("task-1"));
+    await persistence.store.saveContextPackage({
+      ...buildContextPackage("task-1"),
+      summary: "Updated summary",
+    });
+
+    await expect(persistence.store.getContextPackage("task-1")).resolves.toEqual({
+      ...buildContextPackage("task-1"),
+      summary: "Updated summary",
+    });
+
+    const row = persistence.database.connection
+      .prepare("SELECT COUNT(*) AS count FROM runner_task_context_packages WHERE task_id = ?")
+      .get("task-1") as { count: number };
+
+    expect(row.count).toBe(1);
+    persistence.close();
+  });
 });
+
+function buildContextPackage(taskId: string): ContextPackageRecord {
+  return {
+    taskId,
+    summary: "Execution context summary",
+    sources: [
+      {
+        kind: "repo_file",
+        sourceId: "source-1",
+        label: "Entry point",
+        uri: "file:///repo/src/index.ts",
+        summary: "Main entry point for the task.",
+      },
+    ],
+    artifacts: [
+      {
+        artifactId: "artifact-1",
+        kind: "summary",
+        label: "Brief",
+        mimeType: "text/markdown",
+        content: "Focus on startup flow.",
+        summary: "Short implementation brief.",
+      },
+    ],
+  };
+}
