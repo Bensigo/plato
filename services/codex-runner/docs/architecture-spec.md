@@ -14,7 +14,7 @@
 The service is intentionally local-first:
 
 - It runs close to the developer workstation or trusted host.
-- It treats the Codex SDK and local Codex CLI runtime as the primary execution substrate.
+- It treats the Codex SDK as the primary execution substrate and the local Codex runtime as the underlying dependency it uses.
 - It optimizes for a single user operating multiple named agents rather than multi-tenant anonymous workloads.
 - It preserves execution state and filesystem location so an interrupted task can be understood and resumed instead of restarted from scratch.
 
@@ -54,9 +54,7 @@ flowchart LR
     B --> E["CodexRuntimeManager"]
     B --> F["AgentSessionFactory / SessionAdapter"]
     F --> G["Codex SDK Session"]
-    F --> H["Local ProcessPool"]
     G --> I["Codex tools, MCP servers, CLI bridge"]
-    H --> I
     B --> J["LogStreamer / Event Store"]
 ```
 
@@ -121,27 +119,14 @@ This manager is also the right boundary for future SDK/bootstrap concerns such a
 
 ### 4.6 Session Adapter
 
-The service should converge on a Codex-SDK-backed session adapter behind `AgentSession` / `AgentSessionFactory`.
+The runner uses a Codex-SDK-backed session adapter behind `AgentSession` / `AgentSessionFactory`.
 
-Current state:
+The adapter is responsible for:
 
-- `ProcessBackedAgentSession` wraps a `ProcessPool`
-- `createCodexAppServerCommand` launches `codex app-server --listen stdio://`
-- stdout, stderr, and exit are converted into structured session events
-
-Target state:
-
-- the adapter should bind to Codex SDK session primitives directly where available
-- the CLI/app-server path remains a compatibility transport for environments where the SDK still delegates to the local runtime
-
-### 4.7 ProcessPool
-
-The current `LocalProcessPool` is a local capacity gate and process supervisor. Even in an SDK-first architecture, a process layer remains useful for:
-
-- hosting Codex app-server or bridge processes
-- enforcing local concurrency
-- sending interruption signals
-- capturing process-level exit semantics separate from task-level success
+- starting Codex threads in the task worktree
+- streaming Codex SDK events into the runner's structured event model
+- handling interruption through SDK-supported cancellation
+- preserving the same runner-facing lifecycle regardless of internal SDK event shape
 
 ## 5. Task Graph
 
@@ -217,7 +202,7 @@ The session model separates task identity from execution attempts.
 This is enough for the present implementation, but the target model should extend session durability to include:
 
 - session status: `starting`, `running`, `awaiting_approval`, `interrupted`, `exited`
-- transport kind: `sdk`, `app-server`, `cli`
+- transport kind: `sdk`
 - started and ended timestamps
 - last heartbeat timestamp
 - exit classification: success, failure, interrupted, lost
@@ -396,10 +381,9 @@ The CLI should be a client of the orchestration service contract, not a second o
 The runner should integrate with Codex in this preference order:
 
 1. Codex SDK session API
-2. Codex app-server bridge for stdio/local RPC transport
-3. Codex CLI bootstrap/install commands for environment readiness
+2. Codex CLI bootstrap/install commands for environment readiness
 
-This ordering preserves the architecture goal: Codex itself is the execution engine, while the runner owns orchestration, durability, and recovery.
+This preserves the architecture goal: Codex itself is the execution engine, while the runner owns orchestration, durability, and recovery.
 
 ## 10. Worktree Strategy
 
@@ -485,7 +469,6 @@ This service should evolve in reviewable milestones.
 - explicit task contracts
 - local file-backed state
 - git worktree allocation
-- process-backed Codex app-server session
 - runtime bootstrap and verification
 - structured event logging
 
@@ -511,7 +494,7 @@ This service should evolve in reviewable milestones.
 
 - direct Codex SDK session adapter
 - richer session metadata
-- reduced dependence on process stdout/stderr parsing
+- reduced dependence on transport-specific process concerns
 
 ## 13. Summary
 

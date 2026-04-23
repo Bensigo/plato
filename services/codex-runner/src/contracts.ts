@@ -106,21 +106,8 @@ export interface WorktreeManager {
   createWorktree(taskId: string, repoPath: string): Promise<WorktreeAllocation>;
 }
 
-export interface ProcessEventHandlers {
-  onStdoutLine?: (line: string) => Promise<void> | void;
-  onStderrLine?: (line: string) => Promise<void> | void;
-  onExit?: (exitCode: number | null) => Promise<void> | void;
-}
-
 export interface AgentSessionHandlers {
   onExit?: (exitCode: number | null) => Promise<void> | void;
-}
-
-export interface ProcessPool {
-  hasCapacity(): boolean;
-  spawn(task: RunnerTaskRecord, worktree: WorktreeAllocation): Promise<ManagedSession>;
-  attach(sessionId: string, handlers: ProcessEventHandlers): Promise<void>;
-  interrupt(sessionId: string): Promise<void>;
 }
 
 export interface LogStreamer {
@@ -138,6 +125,7 @@ export interface AgentSession {
     worktree: WorktreeAllocation,
     handlers?: AgentSessionHandlers,
   ): Promise<ManagedSession>;
+  interrupt(sessionId: string): Promise<void>;
 }
 
 export interface AgentSessionFactory {

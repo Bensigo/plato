@@ -10,7 +10,7 @@ This package is not the whole project and should not describe the whole monorepo
 - explicit task lifecycle state
 - git worktree isolation per task
 - Codex runtime readiness checks and bootstrap
-- process-backed agent sessions
+- agent session adapters for Codex-backed execution
 - structured event logs for task and session history
 - interruption and resume without losing the original worktree
 
@@ -21,7 +21,7 @@ The current codebase already exercises a concrete slice of this design:
 - `CodexRunnerService` queues tasks, schedules work when capacity exists, and persists task state.
 - `GitWorktreeManager` creates a dedicated branch and worktree under `.plato/worktrees/<taskId>`.
 - `DefaultCodexRuntimeManager` verifies that the `codex` runtime is available and can install it when missing.
-- `ProcessBackedAgentSession` starts a managed process and turns stdout, stderr, and exit events into structured runner events.
+- `CodexSdkBackedAgentSession` provides the Codex-SDK-backed execution path while normalizing events into the runner stream.
 - File-backed store and log implementations provide a durable baseline for tests and early integration.
 
 ## Task Lifecycle

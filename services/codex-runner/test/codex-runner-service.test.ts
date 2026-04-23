@@ -8,10 +8,8 @@ import {
   WorktreeProvisioningError,
   type LogStreamer,
   ManagedSession,
-  ProcessPool,
   RunnerStore,
   type RunnerSessionRecord,
-  type RunnerSessionState,
   RunnerTaskRecord,
   RunnerTaskState,
   SessionStore,
@@ -86,46 +84,6 @@ class FakeWorktreeManager implements WorktreeManager {
   }
 }
 
-class FakeProcessPool implements ProcessPool {
-  readonly spawns: ManagedSession[] = [];
-  readonly interrupted: string[] = [];
-  #activeSessions = 0;
-
-  constructor(private readonly capacity: number) {}
-
-  hasCapacity(): boolean {
-    return this.#activeSessions < this.capacity;
-  }
-
-  async spawn(task: RunnerTaskRecord, worktree: WorktreeAllocation): Promise<ManagedSession> {
-    this.reserve();
-    const session = {
-      sessionId: `session-${this.spawns.length + 1}`,
-      taskId: task.taskId,
-      worktreePath: worktree.worktreePath,
-    };
-    this.spawns.push(session);
-    return session;
-  }
-
-  async attach(): Promise<void> {}
-
-  async interrupt(sessionId: string): Promise<void> {
-    this.interrupted.push(sessionId);
-    this.release();
-  }
-
-  reserve(): void {
-    this.#activeSessions += 1;
-  }
-
-  release(): void {
-    if (this.#activeSessions > 0) {
-      this.#activeSessions -= 1;
-    }
-  }
-}
-
 class FakeRuntimeManager implements CodexRuntimeManager {
   readonly calls: string[] = [];
   failure?: Error;
@@ -144,9 +102,8 @@ class FakeAgentSession implements AgentSession {
     worktreePath: string;
     sessionId: string;
   }[] = [];
+  readonly interrupted: string[] = [];
   readonly #exitHandlers = new Map<string, (exitCode: number | null) => Promise<void> | void>();
-
-  constructor(private readonly processPool: FakeProcessPool) {}
 
   async start(
     task: RunnerTaskRecord,
@@ -154,7 +111,6 @@ class FakeAgentSession implements AgentSession {
     handlers?: { onExit?: (exitCode: number | null) => Promise<void> | void },
   ): Promise<ManagedSession> {
     const sessionId = `session-${this.started.length + 1}`;
-    this.processPool.reserve();
     this.started.push({
       taskId: task.taskId,
       worktreePath: worktree.worktreePath,
@@ -174,8 +130,11 @@ class FakeAgentSession implements AgentSession {
   }
 
   async exit(sessionId: string, exitCode: number | null): Promise<void> {
-    this.processPool.release();
     await this.#exitHandlers.get(sessionId)?.(exitCode);
+  }
+
+  async interrupt(sessionId: string): Promise<void> {
+    this.interrupted.push(sessionId);
   }
 }
 
@@ -193,13 +152,14 @@ describe("CodexRunnerService", () => {
     const sessionStore = new InMemorySessionStore();
     const logStreamer = new InMemoryLogStreamer();
     const worktreeManager = new FakeWorktreeManager();
-    const processPool = new FakeProcessPool(1);
+    const agentSession = new FakeAgentSession();
     const service = new CodexRunnerService({
       store,
       sessionStore,
       logStreamer,
       worktreeManager,
-      processPool,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
     });
 
     const task = await service.startTask({
@@ -210,18 +170,10 @@ describe("CodexRunnerService", () => {
 
     expect(task.state).toBe("running");
     expect(task.worktreePath).toBe("/repo/.plato/worktrees/task-1");
-    expect(processPool.spawns).toHaveLength(1);
     expect(worktreeManager.allocations).toHaveLength(1);
 
     await expect(service.listEvents("task-1")).resolves.toEqual([
       { taskId: "task-1", type: "task.queued" },
-      {
-        taskId: "task-1",
-        type: "session.started",
-        sessionId: "session-1",
-        worktreePath: "/repo/.plato/worktrees/task-1",
-        pid: undefined,
-      },
       {
         taskId: "task-1",
         type: "task.started",
@@ -236,7 +188,6 @@ describe("CodexRunnerService", () => {
     const sessionStore = new InMemorySessionStore();
     const logStreamer = new InMemoryLogStreamer();
     const worktreeManager = new FakeWorktreeManager();
-    const processPool = new FakeProcessPool(1);
     const runtimeManager = new FakeRuntimeManager();
     runtimeManager.failure = new Error("codex install failed");
     const service = new CodexRunnerService({
@@ -244,7 +195,7 @@ describe("CodexRunnerService", () => {
       sessionStore,
       logStreamer,
       worktreeManager,
-      processPool,
+      maxConcurrentTasks: 1,
       runtimeManager,
     });
 
@@ -256,7 +207,6 @@ describe("CodexRunnerService", () => {
 
     expect(runtimeManager.calls).toEqual(["task-1"]);
     expect(task.state).toBe("failed");
-    expect(processPool.spawns).toHaveLength(0);
     expect(worktreeManager.allocations).toHaveLength(0);
     await expect(service.listEvents("task-1")).resolves.toEqual([
       { taskId: "task-1", type: "task.queued" },
@@ -274,13 +224,14 @@ describe("CodexRunnerService", () => {
     const sessionStore = new InMemorySessionStore();
     const logStreamer = new InMemoryLogStreamer();
     const worktreeManager = new FakeWorktreeManager();
-    const processPool = new FakeProcessPool(1);
+    const agentSession = new FakeAgentSession();
     const service = new CodexRunnerService({
       store,
       sessionStore,
       logStreamer,
       worktreeManager,
-      processPool,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
     });
 
     await service.startTask({
@@ -296,7 +247,6 @@ describe("CodexRunnerService", () => {
 
     expect(secondTask.state).toBe("queued");
     expect(secondTask.worktreePath).toBeUndefined();
-    expect(processPool.spawns).toHaveLength(1);
     expect(worktreeManager.allocations).toHaveLength(1);
   });
 
@@ -310,13 +260,12 @@ describe("CodexRunnerService", () => {
       "task-1",
       "/repo",
     );
-    const processPool = new FakeProcessPool(1);
     const service = new CodexRunnerService({
       store,
       sessionStore,
       logStreamer,
       worktreeManager,
-      processPool,
+      maxConcurrentTasks: 1,
     });
 
     const task = await service.startTask({
@@ -327,7 +276,6 @@ describe("CodexRunnerService", () => {
 
     expect(task.state).toBe("failed");
     expect(task.worktreePath).toBeUndefined();
-    expect(processPool.spawns).toHaveLength(0);
 
     await expect(service.listEvents("task-1")).resolves.toEqual([
       { taskId: "task-1", type: "task.queued" },
@@ -345,14 +293,13 @@ describe("CodexRunnerService", () => {
     const sessionStore = new InMemorySessionStore();
     const logStreamer = new InMemoryLogStreamer();
     const worktreeManager = new FakeWorktreeManager();
-    const processPool = new FakeProcessPool(1);
-    const agentSession = new FakeAgentSession(processPool);
+    const agentSession = new FakeAgentSession();
     const service = new CodexRunnerService({
       store,
       sessionStore,
       logStreamer,
       worktreeManager,
-      processPool,
+      maxConcurrentTasks: 1,
       agentSessionFactory: new FakeAgentSessionFactory(agentSession),
     });
 
@@ -365,8 +312,7 @@ describe("CodexRunnerService", () => {
     await service.interruptTask("task-1");
     const resumed = await service.resumeTask("task-1");
 
-    expect(processPool.interrupted).toEqual(["session-1"]);
-    expect(processPool.spawns).toHaveLength(0);
+    expect(agentSession.interrupted).toEqual(["session-1"]);
     expect(resumed.state).toBe("running");
     expect(resumed.worktreePath).toBe("/repo/.plato/worktrees/task-1");
     expect(resumed.activeSessionId).toBe("session-2");
@@ -414,14 +360,13 @@ describe("CodexRunnerService", () => {
     const sessionStore = new InMemorySessionStore();
     const logStreamer = new InMemoryLogStreamer();
     const worktreeManager = new FakeWorktreeManager();
-    const processPool = new FakeProcessPool(1);
-    const agentSession = new FakeAgentSession(processPool);
+    const agentSession = new FakeAgentSession();
     const service = new CodexRunnerService({
       store,
       sessionStore,
       logStreamer,
       worktreeManager,
-      processPool,
+      maxConcurrentTasks: 1,
       agentSessionFactory: new FakeAgentSessionFactory(agentSession),
     });
 
@@ -481,14 +426,13 @@ describe("CodexRunnerService", () => {
     const sessionStore = new InMemorySessionStore();
     const logStreamer = new InMemoryLogStreamer();
     const worktreeManager = new FakeWorktreeManager();
-    const processPool = new FakeProcessPool(1);
-    const agentSession = new FakeAgentSession(processPool);
+    const agentSession = new FakeAgentSession();
     const service = new CodexRunnerService({
       store,
       sessionStore,
       logStreamer,
       worktreeManager,
-      processPool,
+      maxConcurrentTasks: 1,
       agentSessionFactory: new FakeAgentSessionFactory(agentSession),
     });
 
@@ -529,5 +473,36 @@ describe("CodexRunnerService", () => {
         message: "Task exited with code 23",
       },
     ]);
+  });
+
+  it("delegates interruption to the active agent session", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "interrupt me",
+    });
+
+    await service.interruptTask("task-1");
+
+    expect(agentSession.interrupted).toEqual(["session-1"]);
+    await expect(service.getTask("task-1")).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "interrupted",
+      activeSessionId: undefined,
+    });
   });
 });
