@@ -22,7 +22,8 @@ The current codebase already exercises a concrete slice of this design:
 - `GitWorktreeManager` creates a dedicated branch and worktree under `.plato/worktrees/<taskId>`.
 - `DefaultCodexRuntimeManager` verifies that the `codex` runtime is available and can install it when missing.
 - `CodexSdkBackedAgentSession` provides the Codex-SDK-backed execution path while normalizing events into the runner stream.
-- File-backed store and log implementations provide a durable baseline for tests and early integration.
+- SQLite-backed task and session stores provide durable runner state through the shared `@plato/db` foundation.
+- File-backed log streaming still provides the ordered event trail used for inspection and recovery.
 
 ## Task Lifecycle
 

@@ -16,6 +16,7 @@
     "vitest": "^4.1.4"
   },
   "dependencies": {
+    "@plato/db": "workspace:*",
     "@openai/codex-sdk": "^0.123.0"
   }
 }
