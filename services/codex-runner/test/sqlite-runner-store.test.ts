@@ -175,6 +175,40 @@ describe("SqliteRunnerStore", () => {
     expect(row.count).toBe(1);
     persistence.close();
   });
+
+  it("refreshes updated_at when an existing context package changes", async () => {
+    const tempDir = await createTempDir("codex-runner-store-");
+    tempDirs.push(tempDir);
+    const persistence = openCodexRunnerPersistence({
+      filePath: `${tempDir}/runner.sqlite`,
+    });
+
+    await persistence.store.saveTask(buildTask("task-1", "queued"));
+    await persistence.store.saveContextPackage(buildContextPackage("task-1"));
+
+    const initialRow = persistence.database.connection
+      .prepare(
+        "SELECT created_at, updated_at FROM runner_task_context_packages WHERE task_id = ?",
+      )
+      .get("task-1") as { created_at: string; updated_at: string };
+
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    await persistence.store.saveContextPackage({
+      ...buildContextPackage("task-1"),
+      summary: "Updated summary",
+    });
+
+    const updatedRow = persistence.database.connection
+      .prepare(
+        "SELECT created_at, updated_at FROM runner_task_context_packages WHERE task_id = ?",
+      )
+      .get("task-1") as { created_at: string; updated_at: string };
+
+    expect(updatedRow.created_at).toBe(initialRow.created_at);
+    expect(updatedRow.updated_at).not.toBe(initialRow.updated_at);
+    persistence.close();
+  });
 });
 
 function buildContextPackage(taskId: string): ContextPackageRecord {

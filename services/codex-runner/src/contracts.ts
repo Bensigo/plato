@@ -185,6 +185,7 @@ export interface RunnerStore {
   listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]>;
   listChildTasks(parentTaskId: string): Promise<RunnerTaskRecord[]>;
   saveContextPackage(contextPackage: ContextPackageRecord): Promise<void>;
+  deleteContextPackage(taskId: string): Promise<void>;
   getContextPackage(taskId: string): Promise<ContextPackageRecord | undefined>;
 }
 

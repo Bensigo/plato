@@ -70,6 +70,8 @@ export class CodexRunnerService {
         sources: input.contextPackage.sources,
         artifacts: input.contextPackage.artifacts,
       });
+    } else {
+      await this.#store.deleteContextPackage(task.taskId);
     }
     await this.#logStreamer.append({ taskId: task.taskId, type: "task.queued" });
     await this.#scheduleQueuedTasks();

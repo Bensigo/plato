@@ -51,6 +51,10 @@ class InMemoryRunnerStore implements RunnerStore {
     this.#contextPackages.set(contextPackage.taskId, contextPackage);
   }
 
+  async deleteContextPackage(taskId: string): Promise<void> {
+    this.#contextPackages.delete(taskId);
+  }
+
   async getContextPackage(taskId: string): Promise<ContextPackageRecord | undefined> {
     return this.#contextPackages.get(taskId);
   }
@@ -310,6 +314,36 @@ describe("CodexRunnerService", () => {
       sources: [buildContextSource()],
       artifacts: [buildContextArtifact()],
     });
+  });
+
+  it("clears stale context when a task is re-admitted without a context package", async () => {
+    const store = new InMemoryRunnerStore();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore: new InMemorySessionStore(),
+      logStreamer: new InMemoryLogStreamer(),
+      worktreeManager: new FakeWorktreeManager(),
+      maxConcurrentTasks: 0,
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "Use context",
+      contextPackage: {
+        summary: "Execution context summary",
+        sources: [buildContextSource()],
+        artifacts: [buildContextArtifact()],
+      },
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "Retry without context",
+    });
+
+    await expect(service.getContextPackage("task-1")).resolves.toBeUndefined();
   });
 
   it("creates a subtask with a durable parent-child relationship", async () => {

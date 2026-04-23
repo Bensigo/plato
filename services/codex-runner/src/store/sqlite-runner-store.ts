@@ -185,7 +185,8 @@ export class SqliteRunnerStore implements RunnerStore {
         ON CONFLICT(task_id) DO UPDATE SET
           summary = excluded.summary,
           sources_json = excluded.sources_json,
-          artifacts_json = excluded.artifacts_json
+          artifacts_json = excluded.artifacts_json,
+          updated_at = CURRENT_TIMESTAMP
       `)
       .run(
         contextPackage.taskId,
@@ -193,6 +194,17 @@ export class SqliteRunnerStore implements RunnerStore {
         JSON.stringify(contextPackage.sources),
         JSON.stringify(contextPackage.artifacts),
       );
+  }
+
+  async deleteContextPackage(taskId: string): Promise<void> {
+    this.#connection
+      .prepare(
+        `
+          DELETE FROM runner_task_context_packages
+          WHERE task_id = ?
+        `,
+      )
+      .run(taskId);
   }
 
   async getContextPackage(taskId: string): Promise<ContextPackageRecord | undefined> {
