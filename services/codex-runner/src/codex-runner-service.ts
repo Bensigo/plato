@@ -9,6 +9,8 @@ import type {
   RunnerTaskRecord,
   SessionStore,
   StartTaskInput,
+  TaskResultVerifier,
+  TaskVerificationResult,
   WorktreeAllocation,
   WorktreeManager,
 } from "./contracts.js";
@@ -22,6 +24,7 @@ export interface CodexRunnerServiceDeps {
   logStreamer: LogStreamer;
   agentSessionFactory?: AgentSessionFactory;
   runtimeManager?: CodexRuntimeManager;
+  taskResultVerifier?: TaskResultVerifier;
   maxConcurrentTasks?: number;
 }
 
@@ -32,6 +35,7 @@ export class CodexRunnerService {
   readonly #logStreamer: LogStreamer;
   readonly #agentSession: AgentSession;
   readonly #runtimeManager?: CodexRuntimeManager;
+  readonly #taskResultVerifier?: TaskResultVerifier;
   readonly #maxConcurrentTasks: number;
 
   constructor(deps: CodexRunnerServiceDeps) {
@@ -42,6 +46,7 @@ export class CodexRunnerService {
     const sessionFactory = deps.agentSessionFactory ?? new CodexSdkBackedAgentSessionFactory();
     this.#agentSession = sessionFactory.create(deps.logStreamer);
     this.#runtimeManager = deps.runtimeManager;
+    this.#taskResultVerifier = deps.taskResultVerifier;
     this.#maxConcurrentTasks = deps.maxConcurrentTasks ?? 1;
   }
 
@@ -367,11 +372,6 @@ export class CodexRunnerService {
     }
 
     const completed = exitCode === 0;
-    const nextTask: RunnerTaskRecord = {
-      ...task,
-      state: completed ? "completed" : "failed",
-      activeSessionId: undefined,
-    };
     const sessionRecord: RunnerSessionRecord = {
       sessionId,
       taskId,
@@ -380,27 +380,53 @@ export class CodexRunnerService {
       exitCode,
     };
 
-    await this.#store.saveTask(nextTask);
     await this.#sessionStore.saveSession(sessionRecord);
-    await this.#logStreamer.append(
-      completed
-        ? {
-            taskId,
-            type: "task.completed",
-            sessionId,
-            worktreePath,
-            exitCode,
-          }
-        : {
-            taskId,
-            type: "task.failed",
-            sessionId,
-            worktreePath,
-            exitCode,
-            errorCode: "TASK_EXIT_NON_ZERO",
-            message: `Task exited with code ${exitCode}`,
-          },
-    );
+    if (completed) {
+      const verification = await this.#runPostRunVerification(task, sessionRecord);
+      const nextTask: RunnerTaskRecord = {
+        ...task,
+        state: verification.status === "passed" ? "completed" : "failed",
+        activeSessionId: undefined,
+      };
+
+      await this.#store.saveTask(nextTask);
+      await this.#logStreamer.append(
+        verification.status === "passed"
+          ? {
+              taskId,
+              type: "task.completed",
+              sessionId,
+              worktreePath,
+              exitCode,
+            }
+          : {
+              taskId,
+              type: "task.failed",
+              sessionId,
+              worktreePath,
+              exitCode,
+              errorCode: verification.errorCode ?? "TASK_VERIFICATION_FAILED",
+              message: verification.message ?? "Task verification failed",
+            },
+      );
+    } else {
+      const nextTask: RunnerTaskRecord = {
+        ...task,
+        state: "failed",
+        activeSessionId: undefined,
+      };
+
+      await this.#store.saveTask(nextTask);
+      await this.#logStreamer.append({
+        taskId,
+        type: "task.failed",
+        sessionId,
+        worktreePath,
+        exitCode,
+        errorCode: "TASK_EXIT_NON_ZERO",
+        message: `Task exited with code ${exitCode}`,
+      });
+    }
     await this.#scheduleQueuedTasks();
   }
 
@@ -526,6 +552,65 @@ export class CodexRunnerService {
       exitCode: update.exitCode ?? current?.exitCode,
       pendingApproval: update.pendingApproval,
     });
+  }
+
+  async #runPostRunVerification(
+    task: RunnerTaskRecord,
+    session: RunnerSessionRecord,
+  ): Promise<TaskVerificationResult> {
+    if (!this.#taskResultVerifier) {
+      return {
+        verificationId: "verification-skipped",
+        status: "passed",
+      };
+    }
+
+    await this.#logStreamer.append({
+      taskId: task.taskId,
+      type: "verification.started",
+      sessionId: session.sessionId,
+      worktreePath: session.worktreePath,
+    });
+
+    try {
+      const result = await this.#taskResultVerifier.verify({
+        task,
+        session,
+      });
+      await this.#logStreamer.append({
+        taskId: task.taskId,
+        type: result.status === "passed" ? "verification.completed" : "verification.failed",
+        sessionId: session.sessionId,
+        worktreePath: session.worktreePath,
+        verificationId: result.verificationId,
+        verificationStatus: result.status,
+        errorCode: result.errorCode,
+        message: result.message,
+      });
+
+      return result;
+    } catch (error) {
+      const failure: TaskVerificationResult = {
+        verificationId: "verification-error",
+        status: "failed",
+        errorCode:
+          error instanceof Error && "code" in error ? String(error.code) : "TASK_VERIFICATION_ERRORED",
+        message: error instanceof Error ? error.message : "Task verification errored",
+      };
+
+      await this.#logStreamer.append({
+        taskId: task.taskId,
+        type: "verification.failed",
+        sessionId: session.sessionId,
+        worktreePath: session.worktreePath,
+        verificationId: failure.verificationId,
+        verificationStatus: failure.status,
+        errorCode: failure.errorCode,
+        message: failure.message,
+      });
+
+      return failure;
+    }
   }
 
   async #hasCapacity(): Promise<boolean> {

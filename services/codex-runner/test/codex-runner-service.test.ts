@@ -15,6 +15,9 @@ import {
   RunnerTaskState,
   SessionStore,
   SessionEvent,
+  type TaskResultVerifier,
+  type TaskVerificationContext,
+  type TaskVerificationResult,
   WorktreeAllocation,
   WorktreeManager,
 } from "../src/contracts.js";
@@ -144,6 +147,20 @@ class FakeAgentSessionFactory implements AgentSessionFactory {
 
   create(): AgentSession {
     return this.session;
+  }
+}
+
+class FakeTaskResultVerifier implements TaskResultVerifier {
+  readonly calls: TaskVerificationContext[] = [];
+  result: TaskVerificationResult = {
+    verificationId: "verification-1",
+    status: "passed",
+    message: "verification passed",
+  };
+
+  async verify(context: TaskVerificationContext): Promise<TaskVerificationResult> {
+    this.calls.push(context);
+    return this.result;
   }
 }
 
@@ -860,6 +877,164 @@ describe("CodexRunnerService", () => {
         worktreePath: "/repo/.plato/worktrees/task-1",
         errorCode: "TASK_APPROVAL_REJECTED",
         message: "Operator denied the change.",
+      },
+    ]);
+  });
+
+  it("verifies a successful task before marking it completed", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const verifier = new FakeTaskResultVerifier();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+      taskResultVerifier: verifier,
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "verified task",
+    });
+
+    await agentSession.exit("session-1", 0);
+
+    expect(verifier.calls).toEqual([
+      {
+        task: expect.objectContaining({
+          taskId: "task-1",
+          state: "running",
+          activeSessionId: "session-1",
+        }),
+        session: {
+          sessionId: "session-1",
+          taskId: "task-1",
+          worktreePath: "/repo/.plato/worktrees/task-1",
+          state: "completed",
+          exitCode: 0,
+        },
+      },
+    ]);
+    await expect(service.getTask("task-1")).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "completed",
+      activeSessionId: undefined,
+    });
+    await expect(service.listEvents("task-1")).resolves.toEqual([
+      { taskId: "task-1", type: "task.queued" },
+      {
+        taskId: "task-1",
+        type: "task.started",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+      },
+      {
+        taskId: "task-1",
+        type: "verification.started",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+      },
+      {
+        taskId: "task-1",
+        type: "verification.completed",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        verificationId: "verification-1",
+        verificationStatus: "passed",
+        errorCode: undefined,
+        message: "verification passed",
+      },
+      {
+        taskId: "task-1",
+        type: "task.completed",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        exitCode: 0,
+      },
+    ]);
+  });
+
+  it("marks a task failed when post-run verification fails", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const verifier = new FakeTaskResultVerifier();
+    verifier.result = {
+      verificationId: "verification-1",
+      status: "failed",
+      errorCode: "TESTS_FAILED",
+      message: "unit tests failed",
+    };
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+      taskResultVerifier: verifier,
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "verified task",
+    });
+
+    await agentSession.exit("session-1", 0);
+
+    await expect(service.getTask("task-1")).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "failed",
+      activeSessionId: undefined,
+    });
+    await expect(sessionStore.getSession("session-1")).resolves.toMatchObject({
+      sessionId: "session-1",
+      taskId: "task-1",
+      state: "completed",
+      exitCode: 0,
+    });
+    await expect(service.listEvents("task-1")).resolves.toEqual([
+      { taskId: "task-1", type: "task.queued" },
+      {
+        taskId: "task-1",
+        type: "task.started",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+      },
+      {
+        taskId: "task-1",
+        type: "verification.started",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+      },
+      {
+        taskId: "task-1",
+        type: "verification.failed",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        verificationId: "verification-1",
+        verificationStatus: "failed",
+        errorCode: "TESTS_FAILED",
+        message: "unit tests failed",
+      },
+      {
+        taskId: "task-1",
+        type: "task.failed",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        exitCode: 0,
+        errorCode: "TESTS_FAILED",
+        message: "unit tests failed",
       },
     ]);
   });
