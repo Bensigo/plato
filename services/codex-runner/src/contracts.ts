@@ -54,6 +54,7 @@ export interface RunnerTaskRecord {
 export type RunnerSessionState =
   | "running"
   | "awaiting_approval"
+  | "verifying"
   | "completed"
   | "failed"
   | "interrupted";
@@ -103,7 +104,7 @@ export interface SessionEvent {
     | "verification.failed";
   sessionId?: string;
   worktreePath?: string;
-  recoveredState?: "interrupted" | "failed";
+  recoveredState?: "interrupted" | "failed" | "completed";
   approvalRequestId?: string;
   requestedAction?: string;
   verificationId?: string;
