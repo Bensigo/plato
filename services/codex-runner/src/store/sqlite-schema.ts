@@ -33,9 +33,6 @@ export function bootstrapCodexRunnerSchema(connection: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS runner_tasks_state_idx
       ON runner_tasks (state);
 
-    CREATE INDEX IF NOT EXISTS runner_tasks_parent_task_id_idx
-      ON runner_tasks (parent_task_id);
-
     CREATE TABLE IF NOT EXISTS runner_sessions (
       session_id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL,
@@ -72,6 +69,11 @@ export function bootstrapCodexRunnerSchema(connection: DatabaseSync): void {
   ensureColumn(connection, "runner_sessions", "pending_approval_requested_action", "TEXT");
   ensureColumn(connection, "runner_sessions", "pending_approval_reason", "TEXT");
   ensureColumn(connection, "runner_sessions", "pending_approval_session_id", "TEXT");
+
+  connection.exec(`
+    CREATE INDEX IF NOT EXISTS runner_tasks_parent_task_id_idx
+      ON runner_tasks (parent_task_id);
+  `);
 }
 
 function ensureColumn(
