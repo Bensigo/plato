@@ -9,7 +9,7 @@
 
 ## 1. Product Definition
 
-`codex-runner` is the local execution control-plane for personal software agents. It accepts agent tasks, allocates isolated git worktrees, ensures the Codex runtime is available, starts and supervises Codex-backed sessions, records structured events, and preserves enough state for interruption, resume, inspection, and recovery.
+`codex-runner` is the local execution control-plane for personal software agents. In Plato's target architecture, a personal agent can hand Plato a larger goal, Plato can decompose that goal into smaller units of work, spawn multiple worker agents, and coordinate the final outcome. `codex-runner` is the durable execution substrate underneath that flow: it accepts agent tasks, allocates isolated git worktrees, ensures the Codex runtime is available, starts and supervises Codex-backed sessions, records structured events, and preserves enough state for interruption, resume, inspection, and recovery.
 
 The service is intentionally local-first:
 
@@ -21,6 +21,7 @@ The service is intentionally local-first:
 ### Product Goals
 
 - Provide one explicit orchestration boundary for Codex task execution inside Plato.
+- Evolve that boundary into the execution core for decomposed multi-agent task graphs.
 - Make agent runs reproducible through stable task, session, and worktree identities.
 - Support personal-agent workflows where the user may inspect, interrupt, approve, resume, or hand off tasks.
 - Expose structured machine-readable events before adding richer UI or distributed coordination.
@@ -467,30 +468,40 @@ This service should evolve in reviewable milestones.
 ### Milestone A: Current Foundation
 
 - explicit task contracts
-- local file-backed state
+- durable task/session state
 - git worktree allocation
 - runtime bootstrap and verification
 - structured event logging
 
-### Milestone B: Session Durability
+### Milestone B: Durable Subtask Graph
 
-- separate persistent session records
-- timestamps and event sequencing
-- reconciliation of orphaned running tasks
+- parent/child task relationships
+- dependency-aware subtask records
+- task-graph events and graph inspection
+- lifecycle tests for decomposition state transitions
 
-### Milestone C: Approval and Verification
+### Milestone C: Multi-Agent Worker Coordination
 
-- approval checkpoints as durable state
-- pluggable result verification
-- terminal outcome classification based on verifier output
+- coordinator-driven worker spawning
+- configurable concurrent execution
+- failure propagation between child tasks and parent tasks
+- interrupt/resume semantics across a task graph
 
-### Milestone D: MCP/CLI Product Surface
+### Milestone D: Result Synthesis and Verification
+
+- worker result capture and aggregation
+- parent-task synthesis flow
+- verification hooks for child results and final outcomes
+- terminal classification that explains partial or conflicting results
+
+### Milestone E: MCP/CLI Product Surface
 
 - local MCP server façade
 - thin operator CLI
-- streaming status/resources for agent coordination
+- graph-aware task inspection and event resources
+- orchestration controls for upstream personal agents
 
-### Milestone E: SDK-First Runtime
+### Milestone F: SDK-First Runtime
 
 - direct Codex SDK session adapter
 - richer session metadata
@@ -498,4 +509,4 @@ This service should evolve in reviewable milestones.
 
 ## 13. Summary
 
-`codex-runner` should stay a small, explicit local orchestration service that wraps Codex execution with durable task state, isolated worktrees, structured events, and recoverable session control. The current implementation already establishes the right boundaries. The main architectural direction is to deepen session durability, approval/verification semantics, and the public MCP/CLI surface while keeping Codex itself as the execution engine and the runner as the orchestration layer around it.
+`codex-runner` should stay a small, explicit local orchestration service that wraps Codex execution with durable task state, isolated worktrees, structured events, and recoverable session control. The current implementation already establishes the right boundaries for single-task execution. The main architectural direction is to extend those boundaries into decomposed task graphs, coordinated worker execution, result synthesis, and a graph-aware MCP/CLI surface while keeping Codex itself as the execution engine and the runner as the orchestration layer around it.

@@ -1,8 +1,10 @@
 # Codex Runner
 
-`@plato/codex-runner` is a service inside the Plato monorepo. It owns the lifecycle of a Codex task from queueing through worktree setup, runtime checks, session start, interruption, resume, and event capture.
+`@plato/codex-runner` is a service inside the Plato monorepo. It owns the lifecycle of Codex-backed execution from queueing through worktree setup, runtime checks, session start, interruption, resume, and event capture.
 
 This package is not the whole project and should not describe the whole monorepo. Its job is narrower: provide the service boundary that lets the rest of Plato ask for agent work in a predictable way and recover what happened later.
+
+In the larger Plato product, this service is the execution substrate for a future multi-agent orchestration flow. Plato's end goal is to help personal agents such as Hermes or OpenClaw decompose larger tasks into smaller subtasks, spawn multiple worker agents in parallel, and coordinate their results into one final outcome. `codex-runner` is the durability and execution layer that makes that orchestration believable.
 
 ## What The Service Owns
 
@@ -57,6 +59,8 @@ The longer-term role of this workspace is to be one of Plato's core execution se
 - strong isolation between tasks via git worktrees
 - resumable execution that preserves debugging context
 - adapters around side effects so scheduling and lifecycle rules remain unit-testable
+
+The next product step beyond the current foundation is not "more task execution" in the abstract. It is explicit support for parent tasks, child tasks, worker coordination, and result synthesis so Plato can evolve from a durable single-task runner into the orchestration core for a personal multi-agent system.
 
 As the service grows, keep the domain language centered on `task`, `session`, `worktree`, `interrupt`, and `resume`. Those concepts are already the backbone of the implementation and should stay visible in the public API.
 
