@@ -76,7 +76,7 @@ It should remain the single place where lifecycle rules are validated.
 
 ### 4.2 RunnerStore
 
-This persists durable task state. The current implementation is `FileRunnerStore`, but the contract is intentionally narrow so the storage backend can later move to SQLite or another embedded store without changing service behavior.
+This persists durable task state. The current implementation is SQLite-backed through the shared `@plato/db` foundation, but the contract stays intentionally narrow so the storage backend can evolve without changing service behavior.
 
 The store is the source of truth for:
 

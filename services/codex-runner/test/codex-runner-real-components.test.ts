@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { join } from "node:path";
 
 import { CodexRunnerService } from "../src/codex-runner-service.js";
 import type {
@@ -7,13 +6,11 @@ import type {
   AgentSessionFactory,
   LogStreamer,
   ManagedSession,
-  RunnerSessionRecord,
   RunnerTaskRecord,
   SessionEvent,
-  SessionStore,
   WorktreeAllocation,
 } from "../src/contracts.js";
-import { FileRunnerStore } from "../src/store/file-runner-store.js";
+import { openCodexRunnerPersistence } from "../src/store/sqlite-runner-persistence.js";
 import { GitWorktreeManager } from "../src/worktree/git-worktree-manager.js";
 import { cleanupDir, createGitRepo, createTempDir } from "./helpers/git.js";
 
@@ -28,22 +25,6 @@ class InMemoryLogStreamer implements LogStreamer {
 
   async list(taskId: string): Promise<SessionEvent[]> {
     return this.#events.get(taskId) ?? [];
-  }
-}
-
-class InMemorySessionStore implements SessionStore {
-  readonly #sessions = new Map<string, RunnerSessionRecord>();
-
-  async saveSession(session: RunnerSessionRecord): Promise<void> {
-    this.#sessions.set(session.sessionId, session);
-  }
-
-  async getSession(sessionId: string): Promise<RunnerSessionRecord | undefined> {
-    return this.#sessions.get(sessionId);
-  }
-
-  async listSessionsByTask(taskId: string): Promise<RunnerSessionRecord[]> {
-    return [...this.#sessions.values()].filter((session) => session.taskId === taskId);
   }
 }
 
@@ -72,14 +53,17 @@ afterEach(async () => {
 });
 
 describe("CodexRunnerService with real components", () => {
-  it("starts a task with the file store and git worktree manager", async () => {
+  it("starts a task with SQLite-backed stores and the git worktree manager", async () => {
     const repoPath = await createGitRepo();
     const storeDir = await createTempDir("codex-runner-store-");
     tempDirs.push(repoPath, storeDir);
+    const persistence = openCodexRunnerPersistence({
+      filePath: `${storeDir}/runner.sqlite`,
+    });
 
     const service = new CodexRunnerService({
-      store: new FileRunnerStore(join(storeDir, "runner-store.json")),
-      sessionStore: new InMemorySessionStore(),
+      store: persistence.store,
+      sessionStore: persistence.sessionStore,
       worktreeManager: new GitWorktreeManager(),
       logStreamer: new InMemoryLogStreamer(),
       agentSessionFactory: new FakeAgentSessionFactory(),
@@ -98,5 +82,14 @@ describe("CodexRunnerService with real components", () => {
       state: "running",
       worktreePath: `${repoPath}/.plato/worktrees/task-1`,
     });
+    await expect(persistence.sessionStore.listSessionsByTask("task-1")).resolves.toEqual([
+      {
+        sessionId: "session-1",
+        taskId: "task-1",
+        state: "running",
+        worktreePath: `${repoPath}/.plato/worktrees/task-1`,
+      },
+    ]);
+    persistence.close();
   });
 });
