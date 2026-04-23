@@ -641,6 +641,150 @@ describe("CodexRunnerService", () => {
     ]);
   });
 
+  it("keeps awaiting approval tasks counted against capacity until the checkpoint resolves", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "needs approval",
+    });
+    await service.requestTaskApproval("task-1", {
+      approvalRequestId: "approval-1",
+      requestedAction: "apply_patch",
+      reason: "Writes files in the worktree.",
+    });
+
+    const queuedWhileAwaitingApproval = await service.startTask({
+      taskId: "task-2",
+      repoPath: "/repo",
+      prompt: "queued until approval clears",
+    });
+
+    expect(queuedWhileAwaitingApproval.taskId).toBe("task-2");
+    expect(queuedWhileAwaitingApproval.state).toBe("queued");
+    expect(queuedWhileAwaitingApproval.activeSessionId).toBeUndefined();
+    expect(agentSession.started).toEqual([
+      {
+        taskId: "task-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        sessionId: "session-1",
+      },
+    ]);
+
+    await service.rejectTaskAction("task-1", "Operator denied the change.");
+
+    await expect(service.getTask("task-2")).resolves.toMatchObject({
+      taskId: "task-2",
+      state: "running",
+      activeSessionId: "session-2",
+      worktreePath: "/repo/.plato/worktrees/task-2",
+    });
+  });
+
+  it("rejects approval requests for stale session ids", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "needs approval",
+    });
+
+    await expect(
+      service.requestTaskApproval("task-1", {
+        sessionId: "session-stale",
+        approvalRequestId: "approval-1",
+        requestedAction: "apply_patch",
+        reason: "Writes files in the worktree.",
+      }),
+    ).rejects.toThrow("Task task-1 approval session session-stale is not the active session");
+
+    await expect(service.getTask("task-1")).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "running",
+      activeSessionId: "session-1",
+    });
+    await expect(service.getTask("task-1")).resolves.not.toHaveProperty("pendingApproval");
+    await expect(service.listEvents("task-1")).resolves.toEqual([
+      { taskId: "task-1", type: "task.queued" },
+      {
+        taskId: "task-1",
+        type: "task.started",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+      },
+    ]);
+  });
+
+  it("rejects approval requests when the active session is no longer running", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "needs approval",
+    });
+    await sessionStore.saveSession({
+      sessionId: "session-1",
+      taskId: "task-1",
+      worktreePath: "/repo/.plato/worktrees/task-1",
+      pid: 1,
+      state: "interrupted",
+    });
+
+    await expect(
+      service.requestTaskApproval("task-1", {
+        approvalRequestId: "approval-1",
+        requestedAction: "apply_patch",
+        reason: "Writes files in the worktree.",
+      }),
+    ).rejects.toThrow("Task task-1 approval session session-1 is not active");
+
+    await expect(service.getTask("task-1")).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "running",
+      activeSessionId: "session-1",
+    });
+    await expect(service.getTask("task-1")).resolves.not.toHaveProperty("pendingApproval");
+  });
+
   it("fails a task when a pending approval checkpoint is rejected", async () => {
     const store = new InMemoryRunnerStore();
     const sessionStore = new InMemorySessionStore();

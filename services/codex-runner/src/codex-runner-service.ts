@@ -108,6 +108,14 @@ export class CodexRunnerService {
     if (task.state !== "running" || !sessionId) {
       throw new Error(`Task ${taskId} is not running with an active session`);
     }
+    if (sessionId !== task.activeSessionId) {
+      throw new Error(`Task ${taskId} approval session ${sessionId} is not the active session`);
+    }
+
+    const activeSession = await this.#sessionStore.getSession(sessionId);
+    if (!activeSession || activeSession.taskId !== taskId || activeSession.state !== "running") {
+      throw new Error(`Task ${taskId} approval session ${sessionId} is not active`);
+    }
 
     const pendingApproval = {
       approvalRequestId: input.approvalRequestId,
@@ -521,8 +529,12 @@ export class CodexRunnerService {
   }
 
   async #hasCapacity(): Promise<boolean> {
-    const runningTasks = await this.#store.listTasksByState("running");
-    return runningTasks.length < this.#maxConcurrentTasks;
+    const [runningTasks, approvalTasks] = await Promise.all([
+      this.#store.listTasksByState("running"),
+      this.#store.listTasksByState("awaiting_approval"),
+    ]);
+    const activeTasks = runningTasks.length + approvalTasks.filter((task) => task.activeSessionId).length;
+    return activeTasks < this.#maxConcurrentTasks;
   }
 
   async #requireApprovalTask(
