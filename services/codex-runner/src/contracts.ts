@@ -54,6 +54,7 @@ export interface RunnerTaskRecord {
 export type RunnerSessionState =
   | "running"
   | "awaiting_approval"
+  | "verifying"
   | "completed"
   | "failed"
   | "interrupted";
@@ -97,17 +98,40 @@ export interface SessionEvent {
     | "task.interrupted"
     | "task.completed"
     | "task.resumed"
-    | "task.reconciled";
+    | "task.reconciled"
+    | "verification.started"
+    | "verification.completed"
+    | "verification.failed";
   sessionId?: string;
   worktreePath?: string;
-  recoveredState?: "interrupted" | "failed";
+  recoveredState?: "interrupted" | "failed" | "completed";
   approvalRequestId?: string;
   requestedAction?: string;
+  verificationId?: string;
+  verificationStatus?: TaskVerificationStatus;
   errorCode?: string;
   message?: string;
   stream?: "stdout" | "stderr";
   pid?: number;
   exitCode?: number | null;
+}
+
+export type TaskVerificationStatus = "passed" | "failed";
+
+export interface TaskVerificationResult {
+  verificationId: string;
+  status: TaskVerificationStatus;
+  errorCode?: string;
+  message?: string;
+}
+
+export interface TaskVerificationContext {
+  task: RunnerTaskRecord;
+  session: RunnerSessionRecord;
+}
+
+export interface TaskResultVerifier {
+  verify(context: TaskVerificationContext): Promise<TaskVerificationResult>;
 }
 
 export interface RunnerStore {

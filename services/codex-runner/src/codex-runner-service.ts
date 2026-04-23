@@ -9,6 +9,8 @@ import type {
   RunnerTaskRecord,
   SessionStore,
   StartTaskInput,
+  TaskResultVerifier,
+  TaskVerificationResult,
   WorktreeAllocation,
   WorktreeManager,
 } from "./contracts.js";
@@ -22,6 +24,7 @@ export interface CodexRunnerServiceDeps {
   logStreamer: LogStreamer;
   agentSessionFactory?: AgentSessionFactory;
   runtimeManager?: CodexRuntimeManager;
+  taskResultVerifier?: TaskResultVerifier;
   maxConcurrentTasks?: number;
 }
 
@@ -32,6 +35,7 @@ export class CodexRunnerService {
   readonly #logStreamer: LogStreamer;
   readonly #agentSession: AgentSession;
   readonly #runtimeManager?: CodexRuntimeManager;
+  readonly #taskResultVerifier?: TaskResultVerifier;
   readonly #maxConcurrentTasks: number;
 
   constructor(deps: CodexRunnerServiceDeps) {
@@ -42,6 +46,7 @@ export class CodexRunnerService {
     const sessionFactory = deps.agentSessionFactory ?? new CodexSdkBackedAgentSessionFactory();
     this.#agentSession = sessionFactory.create(deps.logStreamer);
     this.#runtimeManager = deps.runtimeManager;
+    this.#taskResultVerifier = deps.taskResultVerifier;
     this.#maxConcurrentTasks = deps.maxConcurrentTasks ?? 1;
   }
 
@@ -367,40 +372,25 @@ export class CodexRunnerService {
     }
 
     const completed = exitCode === 0;
-    const nextTask: RunnerTaskRecord = {
-      ...task,
-      state: completed ? "completed" : "failed",
-      activeSessionId: undefined,
-    };
-    const sessionRecord: RunnerSessionRecord = {
-      sessionId,
-      taskId,
-      worktreePath,
-      state: completed ? "completed" : "failed",
-      exitCode,
-    };
-
-    await this.#store.saveTask(nextTask);
-    await this.#sessionStore.saveSession(sessionRecord);
-    await this.#logStreamer.append(
-      completed
-        ? {
-            taskId,
-            type: "task.completed",
-            sessionId,
-            worktreePath,
-            exitCode,
-          }
-        : {
-            taskId,
-            type: "task.failed",
-            sessionId,
-            worktreePath,
-            exitCode,
-            errorCode: "TASK_EXIT_NON_ZERO",
-            message: `Task exited with code ${exitCode}`,
-          },
-    );
+    if (completed) {
+      await this.#finalizeSuccessfulSession(task, {
+        sessionId,
+        taskId,
+        worktreePath,
+        exitCode,
+      });
+    } else {
+      await this.#persistFailedTask(task, {
+        sessionId,
+        taskId,
+        worktreePath,
+        state: "failed",
+        exitCode,
+      }, {
+        errorCode: "TASK_EXIT_NON_ZERO",
+        message: `Task exited with code ${exitCode}`,
+      });
+    }
     await this.#scheduleQueuedTasks();
   }
 
@@ -437,6 +427,10 @@ export class CodexRunnerService {
       return undefined;
     }
 
+    if (session.state === "verifying") {
+      return this.#recoverVerifyingTask(task, session);
+    }
+
     if (session.state === "failed") {
       return this.#persistRecoveredTask(task, {
         sessionId: session.sessionId,
@@ -459,9 +453,9 @@ export class CodexRunnerService {
 
     return this.#persistRecoveredTask(task, {
       sessionId: session.sessionId,
-      recoveredState: "failed",
+      recoveredState: "completed",
       errorCode: "TASK_RECOVERY_SESSION_COMPLETED",
-      message: "Recovered running task from completed session state without a terminal task transition",
+      message: "Recovered running task from completed session state",
       exitCode: session.exitCode,
     });
   }
@@ -470,7 +464,7 @@ export class CodexRunnerService {
     task: RunnerTaskRecord,
     recovery: {
       sessionId?: string;
-      recoveredState: "interrupted" | "failed";
+      recoveredState: "interrupted" | "failed" | "completed";
       errorCode: string;
       message: string;
       exitCode?: number | null;
@@ -525,6 +519,179 @@ export class CodexRunnerService {
       state: update.state,
       exitCode: update.exitCode ?? current?.exitCode,
       pendingApproval: update.pendingApproval,
+    });
+  }
+
+  async #runPostRunVerification(
+    task: RunnerTaskRecord,
+    session: RunnerSessionRecord,
+  ): Promise<TaskVerificationResult> {
+    if (!this.#taskResultVerifier) {
+      return {
+        verificationId: "verification-skipped",
+        status: "passed",
+      };
+    }
+
+    await this.#logStreamer.append({
+      taskId: task.taskId,
+      type: "verification.started",
+      sessionId: session.sessionId,
+      worktreePath: session.worktreePath,
+    });
+
+    try {
+      const result = await this.#taskResultVerifier.verify({
+        task,
+        session,
+      });
+      await this.#logStreamer.append({
+        taskId: task.taskId,
+        type: result.status === "passed" ? "verification.completed" : "verification.failed",
+        sessionId: session.sessionId,
+        worktreePath: session.worktreePath,
+        verificationId: result.verificationId,
+        verificationStatus: result.status,
+        errorCode: result.errorCode,
+        message: result.message,
+      });
+
+      return result;
+    } catch (error) {
+      const failure: TaskVerificationResult = {
+        verificationId: "verification-error",
+        status: "failed",
+        errorCode:
+          error instanceof Error && "code" in error ? String(error.code) : "TASK_VERIFICATION_ERRORED",
+        message: error instanceof Error ? error.message : "Task verification errored",
+      };
+
+      await this.#logStreamer.append({
+        taskId: task.taskId,
+        type: "verification.failed",
+        sessionId: session.sessionId,
+        worktreePath: session.worktreePath,
+        verificationId: failure.verificationId,
+        verificationStatus: failure.status,
+        errorCode: failure.errorCode,
+        message: failure.message,
+      });
+
+      return failure;
+    }
+  }
+
+  async #finalizeSuccessfulSession(
+    task: RunnerTaskRecord,
+    session: Omit<RunnerSessionRecord, "state">,
+  ): Promise<void> {
+    if (!this.#taskResultVerifier) {
+      await this.#persistCompletedTask(task, {
+        ...session,
+        state: "completed",
+      });
+      return;
+    }
+
+    const verifyingSession: RunnerSessionRecord = {
+      ...session,
+      state: "verifying",
+    };
+    await this.#sessionStore.saveSession(verifyingSession);
+
+    const verification = await this.#runPostRunVerification(task, verifyingSession);
+    if (verification.status === "passed") {
+      await this.#persistCompletedTask(task, {
+        ...session,
+        state: "completed",
+      });
+      return;
+    }
+
+    await this.#persistFailedTask(
+      task,
+      {
+        ...session,
+        state: "failed",
+      },
+      {
+        errorCode: verification.errorCode ?? "TASK_VERIFICATION_FAILED",
+        message: verification.message ?? "Task verification failed",
+      },
+    );
+  }
+
+  async #recoverVerifyingTask(
+    task: RunnerTaskRecord,
+    session: RunnerSessionRecord,
+  ): Promise<RunnerTaskRecord> {
+    const verification = await this.#runPostRunVerification(task, session);
+    const recoveredState = verification.status === "passed" ? "completed" : "failed";
+
+    await this.#sessionStore.saveSession({
+      ...session,
+      state: recoveredState,
+    });
+
+    return this.#persistRecoveredTask(task, {
+      sessionId: session.sessionId,
+      recoveredState,
+      errorCode:
+        verification.status === "passed"
+          ? "TASK_RECOVERY_SESSION_VERIFICATION_COMPLETED"
+          : verification.errorCode ?? "TASK_VERIFICATION_FAILED",
+      message:
+        verification.status === "passed"
+          ? "Recovered running task by completing post-run verification"
+          : verification.message ?? "Task verification failed",
+      exitCode: session.exitCode,
+    });
+  }
+
+  async #persistCompletedTask(task: RunnerTaskRecord, session: RunnerSessionRecord): Promise<void> {
+    await this.#sessionStore.saveSession(session);
+
+    const nextTask: RunnerTaskRecord = {
+      ...task,
+      state: "completed",
+      activeSessionId: undefined,
+    };
+
+    await this.#store.saveTask(nextTask);
+    await this.#logStreamer.append({
+      taskId: task.taskId,
+      type: "task.completed",
+      sessionId: session.sessionId,
+      worktreePath: session.worktreePath,
+      exitCode: session.exitCode,
+    });
+  }
+
+  async #persistFailedTask(
+    task: RunnerTaskRecord,
+    session: RunnerSessionRecord,
+    failure: {
+      errorCode: string;
+      message: string;
+    },
+  ): Promise<void> {
+    await this.#sessionStore.saveSession(session);
+
+    const nextTask: RunnerTaskRecord = {
+      ...task,
+      state: "failed",
+      activeSessionId: undefined,
+    };
+
+    await this.#store.saveTask(nextTask);
+    await this.#logStreamer.append({
+      taskId: task.taskId,
+      type: "task.failed",
+      sessionId: session.sessionId,
+      worktreePath: session.worktreePath,
+      exitCode: session.exitCode,
+      errorCode: failure.errorCode,
+      message: failure.message,
     });
   }
 
