@@ -117,6 +117,11 @@ export interface RunnerSessionRecord extends ManagedSession {
   pendingApproval?: PendingApprovalRecord;
 }
 
+export interface RunnerTaskStatusSnapshot {
+  task: RunnerTaskRecord;
+  sessions: RunnerSessionRecord[];
+}
+
 export interface WorktreeAllocation {
   taskId: string;
   repoPath: string;
@@ -182,6 +187,7 @@ export interface TaskResultVerifier {
 export interface RunnerStore {
   saveTask(task: RunnerTaskRecord): Promise<void>;
   getTask(taskId: string): Promise<RunnerTaskRecord | undefined>;
+  listTasks(): Promise<RunnerTaskRecord[]>;
   listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]>;
   listChildTasks(parentTaskId: string): Promise<RunnerTaskRecord[]>;
   saveContextPackage(contextPackage: ContextPackageRecord): Promise<void>;

@@ -1,4 +1,5 @@
 export * from "./codex-runner-service.js";
+export * from "./cli.js";
 export * from "./contracts.js";
 export * from "./logs/file-log-streamer.js";
 export * from "./runtime/codex-runtime-manager.js";

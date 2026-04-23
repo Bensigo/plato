@@ -6,7 +6,9 @@ import type {
   RequestTaskApprovalInput,
   RunnerStore,
   RunnerSessionRecord,
+  RunnerTaskStatusSnapshot,
   RunnerTaskRecord,
+  RunnerTaskState,
   SessionStore,
   StartTaskInput,
   TaskResultVerifier,
@@ -243,6 +245,34 @@ export class CodexRunnerService {
 
   async getTask(taskId: string): Promise<RunnerTaskRecord | undefined> {
     return this.#store.getTask(taskId);
+  }
+
+  async listTasks(): Promise<RunnerTaskRecord[]> {
+    return this.#store.listTasks();
+  }
+
+  async listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]> {
+    return this.#store.listTasksByState(state);
+  }
+
+  async getTaskStatus(taskId: string): Promise<RunnerTaskStatusSnapshot | undefined> {
+    let task = await this.#store.getTask(taskId);
+    if (!task) {
+      return undefined;
+    }
+
+    if (task.state === "running") {
+      const reconciledTask = await this.#reconcileRunningTask(task);
+      if (reconciledTask) {
+        task = reconciledTask;
+        await this.#scheduleQueuedTasks();
+      }
+    }
+
+    return {
+      task,
+      sessions: await this.#sessionStore.listSessionsByTask(taskId),
+    };
   }
 
   async listSubtasks(taskId: string): Promise<RunnerTaskRecord[]> {

@@ -117,6 +117,33 @@ export class SqliteRunnerStore implements RunnerStore {
     return row ? mapRunnerTaskRow(row) : undefined;
   }
 
+  async listTasks(): Promise<RunnerTaskRecord[]> {
+    const rows = this.#connection
+      .prepare(
+        `
+          SELECT
+            task_id,
+            repo_path,
+            prompt,
+            priority,
+            state,
+            worktree_path,
+            active_session_id,
+            decomposition_kind,
+            parent_task_id,
+            pending_approval_request_id,
+            pending_approval_requested_action,
+            pending_approval_reason,
+            pending_approval_session_id
+          FROM runner_tasks
+          ORDER BY rowid ASC
+        `,
+      )
+      .all() as unknown as RunnerTaskRow[];
+
+    return rows.map(mapRunnerTaskRow);
+  }
+
   async listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]> {
     const rows = this.#connection
       .prepare(

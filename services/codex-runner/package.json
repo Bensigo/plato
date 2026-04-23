@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "bin": {
+    "codex-runner": "./dist/src/cli.js"
+  },
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "dev": "echo 'codex-runner dev not wired yet'",
