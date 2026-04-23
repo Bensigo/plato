@@ -151,6 +151,38 @@ export interface RunnerTaskGraphSnapshot {
   state: RunnerTaskGraphState;
 }
 
+export type WorkerTaskResultClassification =
+  | "completed"
+  | "partial"
+  | "conflicted"
+  | "failed";
+
+export interface WorkerTaskResultRecord {
+  resultId: string;
+  taskId: string;
+  parentTaskId: string;
+  classification: WorkerTaskResultClassification;
+  summary: string;
+  errorCode?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ParentTaskSynthesisRecord {
+  synthesisId: string;
+  parentTaskId: string;
+  classification: WorkerTaskResultClassification;
+  summary: string;
+  childTaskCount: number;
+  resultIds: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface RunnerTaskGraphResultSnapshot {
+  parentTaskId: string;
+  results: WorkerTaskResultRecord[];
+  synthesis?: ParentTaskSynthesisRecord;
+}
+
 export interface WorktreeAllocation {
   taskId: string;
   repoPath: string;
@@ -184,6 +216,8 @@ export interface SessionEvent {
     | "task.graph.dependency.blocked"
     | "task.graph.dependency.satisfied"
     | "task.graph.worker.started"
+    | "task.graph.result.collected"
+    | "task.graph.synthesized"
     | "task.graph.completed"
     | "task.graph.failed"
     | "verification.started"
@@ -197,6 +231,9 @@ export interface SessionEvent {
   blockedByTaskIds?: string[];
   worktreePath?: string;
   graphState?: RunnerTaskGraphState;
+  resultId?: string;
+  synthesisId?: string;
+  resultClassification?: WorkerTaskResultClassification;
   recoveredState?: "interrupted" | "failed" | "completed";
   approvalRequestId?: string;
   requestedAction?: string;
@@ -227,6 +264,26 @@ export interface TaskResultVerifier {
   verify(context: TaskVerificationContext): Promise<TaskVerificationResult>;
 }
 
+export interface WorkerTaskResultCollectionContext {
+  task: RunnerTaskRecord;
+  parentTask: RunnerTaskRecord;
+  session?: RunnerSessionRecord;
+}
+
+export interface TaskResultCollector {
+  collect(context: WorkerTaskResultCollectionContext): Promise<WorkerTaskResultRecord>;
+}
+
+export interface ParentTaskSynthesisContext {
+  parentTask: RunnerTaskRecord;
+  children: RunnerTaskRecord[];
+  results: WorkerTaskResultRecord[];
+}
+
+export interface ParentTaskOutcomeSynthesizer {
+  synthesize(context: ParentTaskSynthesisContext): Promise<ParentTaskSynthesisRecord>;
+}
+
 export interface RunnerStore {
   saveTask(task: RunnerTaskRecord): Promise<void>;
   saveTaskGraph(tasks: RunnerTaskRecord[], contextPackages: ContextPackageRecord[]): Promise<void>;
@@ -237,6 +294,11 @@ export interface RunnerStore {
   saveContextPackage(contextPackage: ContextPackageRecord): Promise<void>;
   deleteContextPackage(taskId: string): Promise<void>;
   getContextPackage(taskId: string): Promise<ContextPackageRecord | undefined>;
+  saveWorkerTaskResult(result: WorkerTaskResultRecord): Promise<void>;
+  getWorkerTaskResult(taskId: string): Promise<WorkerTaskResultRecord | undefined>;
+  listWorkerTaskResults(parentTaskId: string): Promise<WorkerTaskResultRecord[]>;
+  saveParentTaskSynthesis(synthesis: ParentTaskSynthesisRecord): Promise<void>;
+  getParentTaskSynthesis(parentTaskId: string): Promise<ParentTaskSynthesisRecord | undefined>;
 }
 
 export interface SessionStore {

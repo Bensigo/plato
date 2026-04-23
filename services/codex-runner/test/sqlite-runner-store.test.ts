@@ -1,7 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { ContextPackageRecord, RunnerTaskRecord } from "../src/contracts.js";
+import type {
+  ContextPackageRecord,
+  ParentTaskSynthesisRecord,
+  RunnerTaskRecord,
+  WorkerTaskResultRecord,
+} from "../src/contracts.js";
 import { openCodexRunnerPersistence } from "../src/store/sqlite-runner-persistence.js";
 import { cleanupDir, createTempDir } from "./helpers/git.js";
 
@@ -211,6 +216,53 @@ describe("SqliteRunnerStore", () => {
     await expect(secondPersistence.store.getContextPackage("task-1")).resolves.toEqual(
       buildContextPackage("task-1"),
     );
+    secondPersistence.close();
+  });
+
+  it("persists worker results and parent syntheses across store instances", async () => {
+    const tempDir = await createTempDir("codex-runner-store-");
+    tempDirs.push(tempDir);
+    const filePath = `${tempDir}/runner.sqlite`;
+    const parent = buildTask("task-parent", "queued");
+    const child = {
+      ...buildTask("task-child", "completed"),
+      decomposition: {
+        kind: "subtask" as const,
+        parentTaskId: "task-parent",
+      },
+    };
+    const result: WorkerTaskResultRecord = {
+      resultId: "result-task-child",
+      taskId: "task-child",
+      parentTaskId: "task-parent",
+      classification: "conflicted",
+      summary: "Completed with overlapping edits",
+      metadata: {
+        files: ["src/index.ts"],
+      },
+    };
+    const synthesis: ParentTaskSynthesisRecord = {
+      synthesisId: "synthesis-task-parent",
+      parentTaskId: "task-parent",
+      classification: "conflicted",
+      summary: "Graph completed with conflicts",
+      childTaskCount: 1,
+      resultIds: ["result-task-child"],
+      metadata: {
+        requiresReview: true,
+      },
+    };
+
+    const firstPersistence = openCodexRunnerPersistence({ filePath });
+    await firstPersistence.store.saveTaskGraph([parent, child], []);
+    await firstPersistence.store.saveWorkerTaskResult(result);
+    await firstPersistence.store.saveParentTaskSynthesis(synthesis);
+    firstPersistence.close();
+
+    const secondPersistence = openCodexRunnerPersistence({ filePath });
+    await expect(secondPersistence.store.getWorkerTaskResult("task-child")).resolves.toEqual(result);
+    await expect(secondPersistence.store.listWorkerTaskResults("task-parent")).resolves.toEqual([result]);
+    await expect(secondPersistence.store.getParentTaskSynthesis("task-parent")).resolves.toEqual(synthesis);
     secondPersistence.close();
   });
 

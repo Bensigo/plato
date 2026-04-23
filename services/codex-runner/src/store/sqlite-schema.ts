@@ -68,6 +68,36 @@ export function bootstrapCodexRunnerSchema(connection: DatabaseSync): void {
 
     CREATE INDEX IF NOT EXISTS runner_sessions_task_id_idx
       ON runner_sessions (task_id);
+
+    CREATE TABLE IF NOT EXISTS runner_worker_task_results (
+      result_id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL UNIQUE,
+      parent_task_id TEXT NOT NULL,
+      classification TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      error_code TEXT,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(task_id) REFERENCES runner_tasks(task_id) ON DELETE CASCADE,
+      FOREIGN KEY(parent_task_id) REFERENCES runner_tasks(task_id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS runner_worker_task_results_parent_task_id_idx
+      ON runner_worker_task_results (parent_task_id);
+
+    CREATE TABLE IF NOT EXISTS runner_parent_task_syntheses (
+      synthesis_id TEXT PRIMARY KEY,
+      parent_task_id TEXT NOT NULL UNIQUE,
+      classification TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      child_task_count INTEGER NOT NULL,
+      result_ids_json TEXT NOT NULL,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(parent_task_id) REFERENCES runner_tasks(task_id) ON DELETE CASCADE
+    );
   `);
 
   ensureColumn(connection, "runner_tasks", "pending_approval_request_id", "TEXT");
@@ -85,6 +115,9 @@ export function bootstrapCodexRunnerSchema(connection: DatabaseSync): void {
   connection.exec(`
     CREATE INDEX IF NOT EXISTS runner_tasks_parent_task_id_idx
       ON runner_tasks (parent_task_id);
+
+    CREATE INDEX IF NOT EXISTS runner_worker_task_results_parent_task_id_idx
+      ON runner_worker_task_results (parent_task_id);
   `);
 }
 

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { RunnerTaskRecord, RunnerTaskStatusSnapshot, SessionEvent } from "../src/contracts.js";
+import type {
+  RunnerTaskGraphResultSnapshot,
+  RunnerTaskRecord,
+  RunnerTaskStatusSnapshot,
+  SessionEvent,
+} from "../src/contracts.js";
 import type { OperatorRuntime, OperatorRuntimeOptions, RunnerOperatorClient } from "../src/cli.js";
 import { runCodexRunnerCli } from "../src/cli.js";
 
@@ -48,6 +53,9 @@ describe("runCodexRunnerCli", () => {
         return undefined;
       },
       async getTaskGraph() {
+        return undefined;
+      },
+      async getTaskGraphResults() {
         return undefined;
       },
       async getTaskStatus() {
@@ -161,6 +169,9 @@ describe("runCodexRunnerCli", () => {
       async getTaskGraph() {
         return undefined;
       },
+      async getTaskGraphResults() {
+        return undefined;
+      },
       async getTaskStatus(taskId) {
         return taskId === "task-1" ? snapshot : undefined;
       },
@@ -222,6 +233,9 @@ describe("runCodexRunnerCli", () => {
       async getTaskGraph() {
         return undefined;
       },
+      async getTaskGraphResults() {
+        return undefined;
+      },
       async getTaskStatus() {
         return undefined;
       },
@@ -271,6 +285,9 @@ describe("runCodexRunnerCli", () => {
         return undefined;
       },
       async getTaskGraph() {
+        return undefined;
+      },
+      async getTaskGraphResults() {
         return undefined;
       },
       async getTaskStatus() {
@@ -345,6 +362,9 @@ describe("runCodexRunnerCli", () => {
         return undefined;
       },
       async getTaskGraph() {
+        return undefined;
+      },
+      async getTaskGraphResults() {
         return undefined;
       },
       async getTaskStatus() {
@@ -641,6 +661,9 @@ describe("runCodexRunnerCli", () => {
       async getTaskGraph(taskId) {
         return taskId === "task-parent" ? graph : undefined;
       },
+      async getTaskGraphResults() {
+        return undefined;
+      },
       async getTaskStatus() {
         return undefined;
       },
@@ -670,6 +693,134 @@ describe("runCodexRunnerCli", () => {
     expect(JSON.parse(stdout.value)).toEqual(graph);
   });
 
+  it("prints durable graph result snapshots for graph results <taskId>", async () => {
+    const stdout = new BufferWriter();
+    const stderr = new BufferWriter();
+    const snapshot: RunnerTaskGraphResultSnapshot = {
+      parentTaskId: "task-parent",
+      results: [
+        {
+          resultId: "result-task-child",
+          taskId: "task-child",
+          parentTaskId: "task-parent",
+          classification: "partial",
+          summary: "Implementation complete, docs pending",
+        },
+      ],
+      synthesis: {
+        synthesisId: "synthesis-task-parent",
+        parentTaskId: "task-parent",
+        classification: "partial",
+        summary: "Graph is partially complete",
+        childTaskCount: 1,
+        resultIds: ["result-task-child"],
+      },
+    };
+    const service: RunnerOperatorClient = {
+      async startTask() {
+        throw new Error("not used");
+      },
+      async createTaskGraph() {
+        throw new Error("not used");
+      },
+      async getTask() {
+        return undefined;
+      },
+      async getTaskGraph() {
+        return undefined;
+      },
+      async getTaskGraphResults(taskId) {
+        return taskId === "task-parent" ? snapshot : undefined;
+      },
+      async getTaskStatus() {
+        return undefined;
+      },
+      async listTasks() {
+        return [];
+      },
+      async listTasksByState() {
+        return [];
+      },
+      async listEvents() {
+        return [];
+      },
+      async interruptTask() {},
+      async resumeTask() {
+        throw new Error("not used");
+      },
+    };
+
+    const exitCode = await runCodexRunnerCli(["graph", "results", "task-parent"], {
+      stdout,
+      stderr,
+      openRuntime: buildRuntime(service),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    expect(JSON.parse(stdout.value)).toEqual(snapshot);
+  });
+
+  it("prints only the parent synthesis for graph synthesis <taskId>", async () => {
+    const stdout = new BufferWriter();
+    const stderr = new BufferWriter();
+    const snapshot: RunnerTaskGraphResultSnapshot = {
+      parentTaskId: "task-parent",
+      results: [],
+      synthesis: {
+        synthesisId: "synthesis-task-parent",
+        parentTaskId: "task-parent",
+        classification: "conflicted",
+        summary: "Graph has conflicting child edits",
+        childTaskCount: 2,
+        resultIds: ["result-a", "result-b"],
+      },
+    };
+    const service: RunnerOperatorClient = {
+      async startTask() {
+        throw new Error("not used");
+      },
+      async createTaskGraph() {
+        throw new Error("not used");
+      },
+      async getTask() {
+        return undefined;
+      },
+      async getTaskGraph() {
+        return undefined;
+      },
+      async getTaskGraphResults(taskId) {
+        return taskId === "task-parent" ? snapshot : undefined;
+      },
+      async getTaskStatus() {
+        return undefined;
+      },
+      async listTasks() {
+        return [];
+      },
+      async listTasksByState() {
+        return [];
+      },
+      async listEvents() {
+        return [];
+      },
+      async interruptTask() {},
+      async resumeTask() {
+        throw new Error("not used");
+      },
+    };
+
+    const exitCode = await runCodexRunnerCli(["graph", "synthesis", "task-parent"], {
+      stdout,
+      stderr,
+      openRuntime: buildRuntime(service),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    expect(JSON.parse(stdout.value)).toEqual(snapshot.synthesis);
+  });
+
   it("closes the runtime after an interrupt command", async () => {
     const stdout = new BufferWriter();
     const stderr = new BufferWriter();
@@ -696,6 +847,9 @@ describe("runCodexRunnerCli", () => {
         return snapshot.task;
       },
       async getTaskGraph() {
+        return undefined;
+      },
+      async getTaskGraphResults() {
         return undefined;
       },
       async getTaskStatus() {

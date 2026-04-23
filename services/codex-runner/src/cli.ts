@@ -6,7 +6,9 @@ import { parseArgs } from "node:util";
 
 import type {
   CreateTaskGraphInput,
+  ParentTaskSynthesisRecord,
   RunnerTaskRecord,
+  RunnerTaskGraphResultSnapshot,
   RunnerTaskGraphSnapshot,
   RunnerTaskState,
   RunnerTaskStatusSnapshot,
@@ -32,6 +34,7 @@ export interface RunnerOperatorClient {
   createTaskGraph(input: CreateTaskGraphInput): Promise<RunnerTaskGraphSnapshot>;
   getTask(taskId: string): Promise<RunnerTaskRecord | undefined>;
   getTaskGraph(taskId: string): Promise<RunnerTaskGraphSnapshot | undefined>;
+  getTaskGraphResults(taskId: string): Promise<RunnerTaskGraphResultSnapshot | undefined>;
   getTaskStatus(taskId: string): Promise<RunnerTaskStatusSnapshot | undefined>;
   listTasks(): Promise<RunnerTaskRecord[]>;
   listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]>;
@@ -108,8 +111,12 @@ async function handleGraph(
       return handleGraphStart(rest, options);
     case "status":
       return handleGraphStatus(rest, options);
+    case "results":
+      return handleGraphResults(rest, options);
+    case "synthesis":
+      return handleGraphSynthesis(rest, options);
     default:
-      throw new Error("graph requires a subcommand: start or status");
+      throw new Error("graph requires a subcommand: start, status, results, or synthesis");
   }
 }
 
@@ -199,6 +206,69 @@ async function handleGraphStatus(
     }
     writeJson(options.stdout ?? process.stdout, graph);
     return 0;
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleGraphResults(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout" | "openRuntime">,
+): Promise<number> {
+  const snapshot = await loadGraphResults(argv, options, "graph results");
+  writeJson(options.stdout ?? process.stdout, snapshot);
+  return 0;
+}
+
+async function handleGraphSynthesis(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout" | "openRuntime">,
+): Promise<number> {
+  const snapshot = await loadGraphResults(argv, options, "graph synthesis");
+  const synthesis: ParentTaskSynthesisRecord | undefined = snapshot.synthesis;
+  if (!synthesis) {
+    throw new Error(`Task graph ${snapshot.parentTaskId} does not have a synthesis record yet`);
+  }
+
+  writeJson(options.stdout ?? process.stdout, synthesis);
+  return 0;
+}
+
+async function loadGraphResults(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout" | "openRuntime">,
+  commandName: string,
+): Promise<RunnerTaskGraphResultSnapshot> {
+  const parsed = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      "db-path": { type: "string" },
+      "log-path": { type: "string" },
+    },
+  });
+  const [taskId] = parsed.positionals;
+  if (!taskId) {
+    throw new Error(`${commandName} requires a task id`);
+  }
+
+  const runtime = await options.openRuntime?.({
+    cwd: options.cwd,
+    dbPath: parsed.values["db-path"],
+    logPath: parsed.values["log-path"],
+  });
+
+  if (!runtime) {
+    throw new Error("operator runtime was not created");
+  }
+
+  try {
+    const snapshot = await runtime.service.getTaskGraphResults(taskId);
+    if (!snapshot) {
+      throw new Error(`Task graph ${taskId} was not found`);
+    }
+
+    return snapshot;
   } finally {
     runtime.close();
   }
@@ -567,6 +637,8 @@ function buildHelpText(): string {
     "  status [taskId] [--state <state>]",
     "  graph start --prompt <text> --child <json|taskId:prompt[:priority]> [--child ...] [--max-concurrent-tasks <n>]",
     "  graph status <taskId>",
+    "  graph results <taskId>",
+    "  graph synthesis <taskId>",
     "  events <taskId>",
     "  interrupt <taskId>",
     "  resume <taskId>",
