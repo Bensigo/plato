@@ -1,6 +1,8 @@
 # Plato
 
-Plato is a monorepo for building agent-driven products and infrastructure. The repo is split into user-facing applications in `apps/` and backend or infrastructure services in `services/`, with each workspace owning a clear slice of behavior.
+Plato is a monorepo for a local-first CLI/MCP orchestration layer that helps personal agents complete complex work faster and better. The long-term product goal is to let agents such as Hermes or OpenClaw decompose a larger task into smaller subtasks, spawn multiple worker agents in parallel, and coordinate their results into one completed outcome.
+
+The repo is split into user-facing applications in `apps/` and backend or infrastructure services in `services/`, with each workspace owning a clear slice of behavior.
 
 ## What Lives Here
 
@@ -34,16 +36,40 @@ Plato is a monorepo for building agent-driven products and infrastructure. The r
 
 Each workspace should be understandable on its own. Service-specific design details belong in that workspace's local README and `AGENTS.md`.
 
+## Product Goal
+
+Plato is aiming to be the execution and orchestration layer a personal agent can call when a task is too large for a single serial run. In practical terms, that means Plato should eventually:
+
+- accept a top-level task from a personal agent
+- decompose that task into smaller, explicit subtasks
+- spawn multiple worker agents to handle those subtasks in parallel
+- isolate each unit of work so concurrent execution stays safe
+- preserve enough state and event history to inspect, interrupt, resume, and recover work
+- merge subtask outcomes back into one understandable result for the calling agent
+
 ## Current Direction
 
-One active direction in the monorepo is reliable agent execution rather than one-off scripts. In practical terms, that means:
+The current implementation is still closer to the foundation than the full multi-agent product. One active direction in the monorepo is reliable agent execution rather than one-off scripts. In practical terms, that means:
 
 - tasks should move through explicit lifecycle states
 - work should happen in isolated git worktrees
 - session output should be captured as durable events
 - interrupted work should stay recoverable instead of being discarded
 
-Those ideas are currently most concrete in `services/codex-runner`, but they do not define the entire monorepo by themselves.
+Those ideas are currently most concrete in `services/codex-runner`, which is the beginning of the orchestration substrate Plato will need before task decomposition and multi-agent coordination can be layered on top.
+
+## Current Status
+
+Today, Plato most concretely provides the execution backbone for that future system:
+
+- queueing and lifecycle management for Codex-backed tasks
+- isolated git worktrees per task
+- runtime readiness checks and bootstrap
+- session start, interruption, and resume
+- durable task/session state
+- structured event capture for inspection and recovery
+
+That means the repo already has the beginnings of a trustworthy execution layer, but it does not yet fully implement the decomposition and multi-agent orchestration product vision.
 
 ## Getting Started
 
@@ -57,5 +83,7 @@ Those ideas are currently most concrete in `services/codex-runner`, but they do 
 - Use a dedicated branch per milestone.
 - Push each milestone branch and open a PR before building the next step on top of it.
 - Keep tests and contracts close to the workspace that owns the behavior.
+
+The current milestone path for the product is documented in [docs/milestones.md](/Users/macbook/work/plato/docs/milestones.md).
 
 For service-specific guidance on Codex execution, start with [services/codex-runner/README.md](/Users/macbook/work/plato/services/codex-runner/README.md) and [services/codex-runner/AGENTS.md](/Users/macbook/work/plato/services/codex-runner/AGENTS.md).
