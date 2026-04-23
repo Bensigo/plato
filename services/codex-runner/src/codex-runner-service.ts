@@ -2,9 +2,13 @@ import type {
   AgentSession,
   AgentSessionFactory,
   CodexRuntimeManager,
+  ContextPackageRecord,
+  CreateTaskGraphInput,
   LogStreamer,
   RequestTaskApprovalInput,
   RunnerStore,
+  RunnerTaskGraphSnapshot,
+  RunnerTaskGraphState,
   RunnerSessionRecord,
   RunnerTaskStatusSnapshot,
   RunnerTaskRecord,
@@ -79,6 +83,69 @@ export class CodexRunnerService {
     await this.#scheduleQueuedTasks();
 
     return this.#requireTask(task.taskId);
+  }
+
+  async createTaskGraph(input: CreateTaskGraphInput): Promise<RunnerTaskGraphSnapshot> {
+    await this.#validateCreateTaskGraphInput(input);
+
+    const parent: RunnerTaskRecord = {
+      taskId: input.parent.taskId,
+      repoPath: input.parent.repoPath,
+      prompt: input.parent.prompt,
+      priority: input.parent.priority ?? 0,
+      state: "queued",
+      decomposition: input.parent.decomposition,
+    };
+    const children = input.children.map((child) => ({
+      taskId: child.taskId,
+      repoPath: child.repoPath ?? input.parent.repoPath,
+      prompt: child.prompt,
+      priority: child.priority ?? 0,
+      state: "queued" as const,
+      decomposition: {
+        kind: "subtask" as const,
+        parentTaskId: parent.taskId,
+      },
+    }));
+    const contextPackages: ContextPackageRecord[] = [
+      ...(input.parent.contextPackage
+        ? [{
+            taskId: parent.taskId,
+            summary: input.parent.contextPackage.summary,
+            sources: input.parent.contextPackage.sources,
+            artifacts: input.parent.contextPackage.artifacts,
+          }]
+        : []),
+      ...input.children.flatMap((child) =>
+        child.contextPackage
+          ? [{
+              taskId: child.taskId,
+              summary: child.contextPackage.summary,
+              sources: child.contextPackage.sources,
+              artifacts: child.contextPackage.artifacts,
+            }]
+          : [],
+      ),
+    ];
+
+    await this.#store.saveTaskGraph([parent, ...children], contextPackages);
+    await this.#logStreamer.append({
+      taskId: parent.taskId,
+      type: "task.graph.created",
+      graphState: "queued",
+      message: `Created task graph with ${children.length} child task${children.length === 1 ? "" : "s"}`,
+    });
+    for (const task of [parent, ...children]) {
+      await this.#logStreamer.append({ taskId: task.taskId, type: "task.queued" });
+    }
+    await this.#scheduleQueuedTasks();
+
+    const graph = await this.getTaskGraph(parent.taskId);
+    if (!graph) {
+      throw new Error(`Task graph ${parent.taskId} was not found after creation`);
+    }
+
+    return graph;
   }
 
   async interruptTask(taskId: string): Promise<void> {
@@ -280,6 +347,25 @@ export class CodexRunnerService {
     return this.#store.listChildTasks(taskId);
   }
 
+  async getTaskGraph(taskId: string): Promise<RunnerTaskGraphSnapshot | undefined> {
+    const task = await this.#store.getTask(taskId);
+    if (!task) {
+      return undefined;
+    }
+
+    const parentTask = task.decomposition ? await this.#store.getTask(task.decomposition.parentTaskId) : task;
+    if (!parentTask) {
+      return undefined;
+    }
+
+    const children = await this.#store.listChildTasks(parentTask.taskId);
+    return {
+      parent: parentTask,
+      children,
+      state: getGraphState(parentTask, children),
+    };
+  }
+
   async getContextPackage(taskId: string) {
     return this.#store.getContextPackage(taskId);
   }
@@ -318,6 +404,35 @@ export class CodexRunnerService {
     const parentTask = await this.#store.getTask(input.decomposition.parentTaskId);
     if (!parentTask) {
       throw new Error(`Parent task ${input.decomposition.parentTaskId} was not found`);
+    }
+  }
+
+  async #validateCreateTaskGraphInput(input: CreateTaskGraphInput): Promise<void> {
+    if (input.parent.decomposition?.parentTaskId === input.parent.taskId) {
+      throw new Error(`Task ${input.parent.taskId} cannot reference itself as a parent`);
+    }
+
+    const taskIds = [input.parent.taskId, ...input.children.map((child) => child.taskId)];
+    const duplicateTaskId = findDuplicate(taskIds);
+    if (duplicateTaskId) {
+      throw new Error(`Task graph contains duplicate task id ${duplicateTaskId}`);
+    }
+
+    if (input.children.length === 0) {
+      throw new Error("Task graph requires at least one child task");
+    }
+
+    for (const taskId of taskIds) {
+      if (await this.#store.getTask(taskId)) {
+        throw new Error(`Task ${taskId} already exists`);
+      }
+    }
+
+    if (input.parent.decomposition) {
+      const parentTask = await this.#store.getTask(input.parent.decomposition.parentTaskId);
+      if (!parentTask) {
+        throw new Error(`Parent task ${input.parent.decomposition.parentTaskId} was not found`);
+      }
     }
   }
 
@@ -732,6 +847,7 @@ export class CodexRunnerService {
       worktreePath: session.worktreePath,
       exitCode: session.exitCode,
     });
+    await this.#emitGraphLifecycleForTask(nextTask);
   }
 
   async #persistFailedTask(
@@ -760,6 +876,38 @@ export class CodexRunnerService {
       errorCode: failure.errorCode,
       message: failure.message,
     });
+    await this.#emitGraphLifecycleForTask(nextTask);
+  }
+
+  async #emitGraphLifecycleForTask(task: RunnerTaskRecord): Promise<void> {
+    const parentTaskId = task.decomposition?.parentTaskId;
+    if (!parentTaskId) {
+      return;
+    }
+
+    const parent = await this.#store.getTask(parentTaskId);
+    if (!parent) {
+      return;
+    }
+
+    const children = await this.#store.listChildTasks(parentTaskId);
+    const graphState = getGraphState(parent, children);
+    await this.#logStreamer.append({
+      taskId: parentTaskId,
+      type: task.state === "completed" ? "task.graph.child.completed" : "task.graph.child.failed",
+      parentTaskId,
+      childTaskId: task.taskId,
+      graphState,
+    });
+
+    if (graphState === "completed" || graphState === "failed") {
+      await this.#logStreamer.append({
+        taskId: parentTaskId,
+        type: graphState === "completed" ? "task.graph.completed" : "task.graph.failed",
+        parentTaskId,
+        graphState,
+      });
+    }
   }
 
   async #hasCapacity(): Promise<boolean> {
@@ -792,4 +940,37 @@ export class CodexRunnerService {
 
     return task;
   }
+}
+
+function findDuplicate(values: string[]): string | undefined {
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) {
+      return value;
+    }
+    seen.add(value);
+  }
+
+  return undefined;
+}
+
+function getGraphState(parent: RunnerTaskRecord, children: RunnerTaskRecord[]): RunnerTaskGraphState {
+  const tasks = [parent, ...children];
+  if (tasks.some((task) => task.state === "failed")) {
+    return "failed";
+  }
+  if (tasks.length > 0 && tasks.every((task) => task.state === "completed")) {
+    return "completed";
+  }
+  if (tasks.some((task) => task.state === "awaiting_approval")) {
+    return "awaiting_approval";
+  }
+  if (tasks.some((task) => task.state === "running")) {
+    return "running";
+  }
+  if (tasks.some((task) => task.state === "interrupted")) {
+    return "interrupted";
+  }
+
+  return "queued";
 }

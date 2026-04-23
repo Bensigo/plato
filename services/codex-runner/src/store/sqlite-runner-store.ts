@@ -41,6 +41,30 @@ export class SqliteRunnerStore implements RunnerStore {
   }
 
   async saveTask(task: RunnerTaskRecord): Promise<void> {
+    this.#saveTaskRecord(task);
+  }
+
+  async saveTaskGraph(
+    tasks: RunnerTaskRecord[],
+    contextPackages: ContextPackageRecord[],
+  ): Promise<void> {
+    this.#connection.exec("BEGIN IMMEDIATE");
+    try {
+      for (const task of tasks) {
+        this.#saveTaskRecord(task);
+        this.#deleteContextPackageRecord(task.taskId);
+      }
+      for (const contextPackage of contextPackages) {
+        this.#saveContextPackageRecord(contextPackage);
+      }
+      this.#connection.exec("COMMIT");
+    } catch (error) {
+      this.#connection.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  #saveTaskRecord(task: RunnerTaskRecord): void {
     this.#connection
       .prepare(`
         INSERT INTO runner_tasks (
@@ -201,6 +225,10 @@ export class SqliteRunnerStore implements RunnerStore {
   }
 
   async saveContextPackage(contextPackage: ContextPackageRecord): Promise<void> {
+    this.#saveContextPackageRecord(contextPackage);
+  }
+
+  #saveContextPackageRecord(contextPackage: ContextPackageRecord): void {
     this.#connection
       .prepare(`
         INSERT INTO runner_task_context_packages (
@@ -224,6 +252,10 @@ export class SqliteRunnerStore implements RunnerStore {
   }
 
   async deleteContextPackage(taskId: string): Promise<void> {
+    this.#deleteContextPackageRecord(taskId);
+  }
+
+  #deleteContextPackageRecord(taskId: string): void {
     this.#connection
       .prepare(
         `

@@ -78,6 +78,46 @@ describe("SqliteRunnerStore", () => {
     persistence.close();
   });
 
+  it("persists a task graph and context packages in one store operation", async () => {
+    const tempDir = await createTempDir("codex-runner-store-");
+    tempDirs.push(tempDir);
+    const filePath = `${tempDir}/runner.sqlite`;
+
+    const firstPersistence = openCodexRunnerPersistence({ filePath });
+    await firstPersistence.store.saveTaskGraph(
+      [
+        buildTask("task-parent", "queued"),
+        {
+          ...buildTask("task-child", "queued"),
+          decomposition: {
+            kind: "subtask",
+            parentTaskId: "task-parent",
+          },
+        },
+      ],
+      [buildContextPackage("task-child")],
+    );
+    firstPersistence.close();
+
+    const secondPersistence = openCodexRunnerPersistence({ filePath });
+    await expect(secondPersistence.store.getTask("task-parent")).resolves.toEqual(
+      buildTask("task-parent", "queued"),
+    );
+    await expect(secondPersistence.store.listChildTasks("task-parent")).resolves.toEqual([
+      {
+        ...buildTask("task-child", "queued"),
+        decomposition: {
+          kind: "subtask",
+          parentTaskId: "task-parent",
+        },
+      },
+    ]);
+    await expect(secondPersistence.store.getContextPackage("task-child")).resolves.toEqual(
+      buildContextPackage("task-child"),
+    );
+    secondPersistence.close();
+  });
+
   it("adds the parent task index after upgrading an existing database", async () => {
     const tempDir = await createTempDir("codex-runner-store-");
     tempDirs.push(tempDir);

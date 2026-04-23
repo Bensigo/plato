@@ -5,7 +5,9 @@ import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import type {
+  CreateTaskGraphInput,
   RunnerTaskRecord,
+  RunnerTaskGraphSnapshot,
   RunnerTaskState,
   RunnerTaskStatusSnapshot,
   SessionEvent,
@@ -27,7 +29,9 @@ export interface RunnerOperatorClient {
     prompt: string;
     priority?: number;
   }): Promise<RunnerTaskRecord>;
+  createTaskGraph(input: CreateTaskGraphInput): Promise<RunnerTaskGraphSnapshot>;
   getTask(taskId: string): Promise<RunnerTaskRecord | undefined>;
+  getTaskGraph(taskId: string): Promise<RunnerTaskGraphSnapshot | undefined>;
   getTaskStatus(taskId: string): Promise<RunnerTaskStatusSnapshot | undefined>;
   listTasks(): Promise<RunnerTaskRecord[]>;
   listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]>;
@@ -75,6 +79,8 @@ export async function runCodexRunnerCli(
         return await handleStart(rest, { cwd, stdout, openRuntime });
       case "status":
         return await handleStatus(rest, { cwd, stdout, openRuntime });
+      case "graph":
+        return await handleGraph(rest, { cwd, stdout, openRuntime });
       case "events":
         return await handleEvents(rest, { cwd, stdout, openRuntime });
       case "interrupt":
@@ -88,6 +94,110 @@ export async function runCodexRunnerCli(
   } catch (error) {
     stderr.write(`${formatCliError(error)}\n`);
     return 1;
+  }
+}
+
+async function handleGraph(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout" | "openRuntime">,
+): Promise<number> {
+  const [subcommand, ...rest] = argv;
+  switch (subcommand) {
+    case "start":
+      return handleGraphStart(rest, options);
+    case "status":
+      return handleGraphStatus(rest, options);
+    default:
+      throw new Error("graph requires a subcommand: start or status");
+  }
+}
+
+async function handleGraphStart(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout" | "openRuntime">,
+): Promise<number> {
+  const parsed = parseArgs({
+    args: argv,
+    allowPositionals: false,
+    options: {
+      "task-id": { type: "string" },
+      "repo-path": { type: "string" },
+      prompt: { type: "string" },
+      priority: { type: "string" },
+      child: { type: "string", multiple: true },
+      "db-path": { type: "string" },
+      "log-path": { type: "string" },
+    },
+  });
+  const prompt = parsed.values.prompt?.trim();
+  if (!prompt) {
+    throw new Error("graph start requires --prompt");
+  }
+
+  const children = (parsed.values.child ?? []).map(parseChildSpec);
+  const runtime = await options.openRuntime?.({
+    cwd: options.cwd,
+    dbPath: parsed.values["db-path"],
+    logPath: parsed.values["log-path"],
+  });
+
+  if (!runtime) {
+    throw new Error("operator runtime was not created");
+  }
+
+  try {
+    const graph = await runtime.service.createTaskGraph({
+      parent: {
+        taskId: parsed.values["task-id"] ?? randomUUID(),
+        repoPath: resolve(parsed.values["repo-path"] ?? options.cwd ?? process.cwd()),
+        prompt,
+        priority: parseOptionalInteger(parsed.values.priority, "priority"),
+      },
+      children,
+    });
+    writeJson(options.stdout ?? process.stdout, graph);
+    return 0;
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleGraphStatus(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout" | "openRuntime">,
+): Promise<number> {
+  const parsed = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      "db-path": { type: "string" },
+      "log-path": { type: "string" },
+    },
+  });
+  const [taskId] = parsed.positionals;
+  if (!taskId) {
+    throw new Error("graph status requires a task id");
+  }
+
+  const runtime = await options.openRuntime?.({
+    cwd: options.cwd,
+    dbPath: parsed.values["db-path"],
+    logPath: parsed.values["log-path"],
+  });
+
+  if (!runtime) {
+    throw new Error("operator runtime was not created");
+  }
+
+  try {
+    const graph = await runtime.service.getTaskGraph(taskId);
+    if (!graph) {
+      throw new Error(`Task graph ${taskId} was not found`);
+    }
+    writeJson(options.stdout ?? process.stdout, graph);
+    return 0;
+  } finally {
+    runtime.close();
   }
 }
 
@@ -355,6 +465,19 @@ function parseOptionalState(raw: string | undefined): RunnerTaskState | undefine
   return raw;
 }
 
+function parseChildSpec(raw: string): CreateTaskGraphInput["children"][number] {
+  const [taskId, prompt, priority] = raw.split(":", 3);
+  if (!taskId?.trim() || !prompt?.trim()) {
+    throw new Error("--child must use taskId:prompt[:priority]");
+  }
+
+  return {
+    taskId: taskId.trim(),
+    prompt: prompt.trim(),
+    priority: parseOptionalInteger(priority, "child priority"),
+  };
+}
+
 function writeJson(writer: Writer, value: unknown): void {
   writer.write(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -370,6 +493,8 @@ function buildHelpText(): string {
     "Commands:",
     "  start --prompt <text> [--task-id <id>] [--repo-path <path>] [--priority <n>]",
     "  status [taskId] [--state <state>]",
+    "  graph start --prompt <text> --child <taskId:prompt[:priority]> [--child ...]",
+    "  graph status <taskId>",
     "  events <taskId>",
     "  interrupt <taskId>",
     "  resume <taskId>",

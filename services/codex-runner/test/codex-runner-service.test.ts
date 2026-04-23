@@ -33,6 +33,19 @@ class InMemoryRunnerStore implements RunnerStore {
     this.#tasks.set(task.taskId, task);
   }
 
+  async saveTaskGraph(
+    tasks: RunnerTaskRecord[],
+    contextPackages: ContextPackageRecord[],
+  ): Promise<void> {
+    for (const task of tasks) {
+      this.#tasks.set(task.taskId, task);
+      this.#contextPackages.delete(task.taskId);
+    }
+    for (const contextPackage of contextPackages) {
+      this.#contextPackages.set(contextPackage.taskId, contextPackage);
+    }
+  }
+
   async getTask(taskId: string): Promise<RunnerTaskRecord | undefined> {
     return this.#tasks.get(taskId);
   }
@@ -409,6 +422,130 @@ describe("CodexRunnerService", () => {
     ).rejects.toThrow("Parent task task-parent was not found");
   });
 
+  it("creates a parent task and children in one durable task graph", async () => {
+    const store = new InMemoryRunnerStore();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore: new InMemorySessionStore(),
+      logStreamer: new InMemoryLogStreamer(),
+      worktreeManager: new FakeWorktreeManager(),
+      maxConcurrentTasks: 0,
+    });
+
+    const graph = await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate the implementation",
+        contextPackage: {
+          summary: "Parent context",
+          sources: [buildContextSource()],
+          artifacts: [],
+        },
+      },
+      children: [
+        {
+          taskId: "task-child-a",
+          prompt: "Implement API",
+          priority: 2,
+        },
+        {
+          taskId: "task-child-b",
+          repoPath: "/other-repo",
+          prompt: "Write docs",
+          contextPackage: {
+            sources: [],
+            artifacts: [buildContextArtifact()],
+          },
+        },
+      ],
+    });
+
+    expect(graph).toEqual({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate the implementation",
+        priority: 0,
+        state: "queued",
+      },
+      children: [
+        {
+          taskId: "task-child-a",
+          repoPath: "/repo",
+          prompt: "Implement API",
+          priority: 2,
+          state: "queued",
+          decomposition: {
+            kind: "subtask",
+            parentTaskId: "task-parent",
+          },
+        },
+        {
+          taskId: "task-child-b",
+          repoPath: "/other-repo",
+          prompt: "Write docs",
+          priority: 0,
+          state: "queued",
+          decomposition: {
+            kind: "subtask",
+            parentTaskId: "task-parent",
+          },
+        },
+      ],
+      state: "queued",
+    });
+    await expect(service.getContextPackage("task-parent")).resolves.toMatchObject({
+      taskId: "task-parent",
+      summary: "Parent context",
+    });
+    await expect(service.getContextPackage("task-child-b")).resolves.toMatchObject({
+      taskId: "task-child-b",
+      artifacts: [buildContextArtifact()],
+    });
+    await expect(service.listEvents("task-parent")).resolves.toEqual([
+      {
+        taskId: "task-parent",
+        type: "task.graph.created",
+        graphState: "queued",
+        message: "Created task graph with 2 child tasks",
+      },
+      { taskId: "task-parent", type: "task.queued" },
+    ]);
+  });
+
+  it("rejects a task graph with duplicate task ids before persisting it", async () => {
+    const store = new InMemoryRunnerStore();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore: new InMemorySessionStore(),
+      logStreamer: new InMemoryLogStreamer(),
+      worktreeManager: new FakeWorktreeManager(),
+      maxConcurrentTasks: 0,
+    });
+
+    await expect(
+      service.createTaskGraph({
+        parent: {
+          taskId: "task-parent",
+          repoPath: "/repo",
+          prompt: "Parent",
+        },
+        children: [
+          {
+            taskId: "task-child",
+            prompt: "First child",
+          },
+          {
+            taskId: "task-child",
+            prompt: "Duplicate child",
+          },
+        ],
+      }),
+    ).rejects.toThrow("Task graph contains duplicate task id task-child");
+    await expect(service.listTasks()).resolves.toEqual([]);
+  });
+
   it("leaves later tasks queued when the pool is full", async () => {
     const store = new InMemoryRunnerStore();
     const sessionStore = new InMemorySessionStore();
@@ -716,6 +853,92 @@ describe("CodexRunnerService", () => {
         exitCode: 23,
         errorCode: "TASK_EXIT_NON_ZERO",
         message: "Task exited with code 23",
+      },
+    ]);
+  });
+
+  it("emits parent graph lifecycle events as child tasks reach terminal states", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 3,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+      },
+      children: [
+        {
+          taskId: "task-child-a",
+          prompt: "First child",
+        },
+        {
+          taskId: "task-child-b",
+          prompt: "Second child",
+        },
+      ],
+    });
+
+    await agentSession.exit("session-1", 0);
+    await expect(service.getTaskGraph("task-child-a")).resolves.toMatchObject({
+      parent: {
+        taskId: "task-parent",
+      },
+      state: "running",
+    });
+
+    await agentSession.exit("session-2", 1);
+
+    await expect(service.getTaskGraph("task-parent")).resolves.toMatchObject({
+      parent: {
+        taskId: "task-parent",
+      },
+      state: "failed",
+    });
+    await expect(service.listEvents("task-parent")).resolves.toEqual([
+      {
+        taskId: "task-parent",
+        type: "task.graph.created",
+        graphState: "queued",
+        message: "Created task graph with 2 child tasks",
+      },
+      { taskId: "task-parent", type: "task.queued" },
+      {
+        taskId: "task-parent",
+        type: "task.started",
+        sessionId: "session-3",
+        worktreePath: "/repo/.plato/worktrees/task-parent",
+      },
+      {
+        taskId: "task-parent",
+        type: "task.graph.child.completed",
+        parentTaskId: "task-parent",
+        childTaskId: "task-child-a",
+        graphState: "running",
+      },
+      {
+        taskId: "task-parent",
+        type: "task.graph.child.failed",
+        parentTaskId: "task-parent",
+        childTaskId: "task-child-b",
+        graphState: "failed",
+      },
+      {
+        taskId: "task-parent",
+        type: "task.graph.failed",
+        parentTaskId: "task-parent",
+        graphState: "failed",
       },
     ]);
   });

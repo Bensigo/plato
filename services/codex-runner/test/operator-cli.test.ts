@@ -36,7 +36,13 @@ describe("runCodexRunnerCli", () => {
           state: "queued",
         };
       },
+      async createTaskGraph() {
+        throw new Error("not used");
+      },
       async getTask() {
+        return undefined;
+      },
+      async getTaskGraph() {
         return undefined;
       },
       async getTaskStatus() {
@@ -121,8 +127,14 @@ describe("runCodexRunnerCli", () => {
       async startTask() {
         throw new Error("not used");
       },
+      async createTaskGraph() {
+        throw new Error("not used");
+      },
       async getTask() {
         return snapshot.task;
+      },
+      async getTaskGraph() {
+        return undefined;
       },
       async getTaskStatus(taskId) {
         return taskId === "task-1" ? snapshot : undefined;
@@ -176,7 +188,13 @@ describe("runCodexRunnerCli", () => {
       async startTask() {
         throw new Error("not used");
       },
+      async createTaskGraph() {
+        throw new Error("not used");
+      },
       async getTask() {
+        return undefined;
+      },
+      async getTaskGraph() {
         return undefined;
       },
       async getTaskStatus() {
@@ -221,7 +239,13 @@ describe("runCodexRunnerCli", () => {
       async startTask() {
         throw new Error("not used");
       },
+      async createTaskGraph() {
+        throw new Error("not used");
+      },
       async getTask() {
+        return undefined;
+      },
+      async getTaskGraph() {
         return undefined;
       },
       async getTaskStatus() {
@@ -256,6 +280,163 @@ describe("runCodexRunnerCli", () => {
     });
   });
 
+  it("starts a task graph and prints the created graph snapshot", async () => {
+    const stdout = new BufferWriter();
+    const stderr = new BufferWriter();
+    const calls: unknown[] = [];
+    const graph = {
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+        priority: 0,
+        state: "queued" as const,
+      },
+      children: [
+        {
+          taskId: "task-child",
+          repoPath: "/repo",
+          prompt: "Build API",
+          priority: 3,
+          state: "queued" as const,
+          decomposition: {
+            kind: "subtask" as const,
+            parentTaskId: "task-parent",
+          },
+        },
+      ],
+      state: "queued" as const,
+    };
+    const service: RunnerOperatorClient = {
+      async startTask() {
+        throw new Error("not used");
+      },
+      async createTaskGraph(input) {
+        calls.push(input);
+        return graph;
+      },
+      async getTask() {
+        return undefined;
+      },
+      async getTaskGraph() {
+        return undefined;
+      },
+      async getTaskStatus() {
+        return undefined;
+      },
+      async listTasks() {
+        return [];
+      },
+      async listTasksByState() {
+        return [];
+      },
+      async listEvents() {
+        return [];
+      },
+      async interruptTask() {},
+      async resumeTask() {
+        throw new Error("not used");
+      },
+    };
+
+    const exitCode = await runCodexRunnerCli(
+      [
+        "graph",
+        "start",
+        "--task-id",
+        "task-parent",
+        "--repo-path",
+        "/repo",
+        "--prompt",
+        "Coordinate",
+        "--child",
+        "task-child:Build API:3",
+      ],
+      {
+        stdout,
+        stderr,
+        openRuntime: buildRuntime(service),
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    expect(calls).toEqual([
+      {
+        parent: {
+          taskId: "task-parent",
+          repoPath: "/repo",
+          prompt: "Coordinate",
+          priority: undefined,
+        },
+        children: [
+          {
+            taskId: "task-child",
+            prompt: "Build API",
+            priority: 3,
+          },
+        ],
+      },
+    ]);
+    expect(JSON.parse(stdout.value)).toEqual(graph);
+  });
+
+  it("prints a task graph snapshot for graph status <taskId>", async () => {
+    const stdout = new BufferWriter();
+    const stderr = new BufferWriter();
+    const graph = {
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+        priority: 0,
+        state: "completed" as const,
+      },
+      children: [],
+      state: "completed" as const,
+    };
+    const service: RunnerOperatorClient = {
+      async startTask() {
+        throw new Error("not used");
+      },
+      async createTaskGraph() {
+        throw new Error("not used");
+      },
+      async getTask() {
+        return graph.parent;
+      },
+      async getTaskGraph(taskId) {
+        return taskId === "task-parent" ? graph : undefined;
+      },
+      async getTaskStatus() {
+        return undefined;
+      },
+      async listTasks() {
+        return [];
+      },
+      async listTasksByState() {
+        return [];
+      },
+      async listEvents() {
+        return [];
+      },
+      async interruptTask() {},
+      async resumeTask() {
+        throw new Error("not used");
+      },
+    };
+
+    const exitCode = await runCodexRunnerCli(["graph", "status", "task-parent"], {
+      stdout,
+      stderr,
+      openRuntime: buildRuntime(service),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    expect(JSON.parse(stdout.value)).toEqual(graph);
+  });
+
   it("closes the runtime after an interrupt command", async () => {
     const stdout = new BufferWriter();
     const stderr = new BufferWriter();
@@ -275,8 +456,14 @@ describe("runCodexRunnerCli", () => {
       async startTask() {
         throw new Error("not used");
       },
+      async createTaskGraph() {
+        throw new Error("not used");
+      },
       async getTask() {
         return snapshot.task;
+      },
+      async getTaskGraph() {
+        return undefined;
       },
       async getTaskStatus() {
         return snapshot;

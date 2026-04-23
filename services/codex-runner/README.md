@@ -62,6 +62,12 @@ The longer-term role of this workspace is to be one of Plato's core execution se
 
 The next product step beyond the current foundation is not "more task execution" in the abstract. It is explicit support for parent tasks, child tasks, worker coordination, and result synthesis so Plato can evolve from a durable single-task runner into the orchestration core for a personal multi-agent system.
 
+## Task Graphs
+
+`CodexRunnerService.createTaskGraph()` is the durable admission path for submitting one parent task with one or more child tasks. The parent and children are persisted through the store as one graph operation before scheduling begins, and each child is recorded with a `subtask` decomposition that points back to the parent task id.
+
+Operators can inspect graph state with `getTaskGraph(taskId)` or `codex-runner graph status <taskId>`. Passing either a parent id or child id returns the parent, immediate children, and aggregate graph state. Parent-scoped graph lifecycle events are emitted when the graph is created and when child tasks complete or fail.
+
 As the service grows, keep the domain language centered on `task`, `session`, `worktree`, `interrupt`, and `resume`. Those concepts are already the backbone of the implementation and should stay visible in the public API.
 
 ## Startup Recovery
