@@ -37,6 +37,10 @@ class InMemoryRunnerStore implements RunnerStore {
     return this.#tasks.get(taskId);
   }
 
+  async listTasks(): Promise<RunnerTaskRecord[]> {
+    return [...this.#tasks.values()];
+  }
+
   async listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]> {
     return [...this.#tasks.values()].filter((task) => task.state === state);
   }
