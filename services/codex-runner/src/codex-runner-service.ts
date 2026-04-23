@@ -144,76 +144,74 @@ export class CodexRunnerService {
   }
 
   async #scheduleQueuedTasks(): Promise<void> {
-    if (!(await this.#hasCapacity())) {
-      return;
-    }
+    while (await this.#hasCapacity()) {
+      const queuedTasks = await this.#store.listTasksByState("queued");
+      const nextTask = queuedTasks
+        .slice()
+        .sort((left, right) => right.priority - left.priority || left.taskId.localeCompare(right.taskId))[0];
 
-    const queuedTasks = await this.#store.listTasksByState("queued");
-    const nextTask = queuedTasks
-      .slice()
-      .sort((left, right) => right.priority - left.priority || left.taskId.localeCompare(right.taskId))[0];
-
-    if (!nextTask) {
-      return;
-    }
-
-    let allocation: WorktreeAllocation;
-    try {
-      if (this.#runtimeManager) {
-        await this.#runtimeManager.ensureReady(nextTask, this.#logStreamer);
+      if (!nextTask) {
+        return;
       }
-    } catch (error) {
-      const failedTask: RunnerTaskRecord = {
-        ...nextTask,
-        state: "failed",
-      };
 
-      await this.#store.saveTask(failedTask);
-      await this.#logStreamer.append({
-        taskId: nextTask.taskId,
-        type: "task.failed",
-        errorCode: error instanceof Error && "code" in error ? String(error.code) : "CODEX_RUNTIME_FAILED",
-        message: error instanceof Error ? error.message : "Unknown Codex runtime failure",
-      });
-      return;
+      let allocation: WorktreeAllocation;
+      try {
+        if (this.#runtimeManager) {
+          await this.#runtimeManager.ensureReady(nextTask, this.#logStreamer);
+        }
+      } catch (error) {
+        const failedTask: RunnerTaskRecord = {
+          ...nextTask,
+          state: "failed",
+        };
+
+        await this.#store.saveTask(failedTask);
+        await this.#logStreamer.append({
+          taskId: nextTask.taskId,
+          type: "task.failed",
+          errorCode: error instanceof Error && "code" in error ? String(error.code) : "CODEX_RUNTIME_FAILED",
+          message: error instanceof Error ? error.message : "Unknown Codex runtime failure",
+        });
+        continue;
+      }
+
+      try {
+        allocation =
+          nextTask.worktreePath === undefined
+            ? await this.#worktreeManager.createWorktree(nextTask.taskId, nextTask.repoPath)
+            : {
+                taskId: nextTask.taskId,
+                repoPath: nextTask.repoPath,
+                branchName: `plato/task-${nextTask.taskId}`,
+                worktreePath: nextTask.worktreePath,
+              };
+      } catch (error) {
+        const provisioningError =
+          error instanceof WorktreeProvisioningError
+            ? error
+            : new WorktreeProvisioningError(
+                error instanceof Error ? error.message : "Unknown worktree provisioning failure",
+                nextTask.taskId,
+                nextTask.repoPath,
+              );
+
+        const failedTask: RunnerTaskRecord = {
+          ...nextTask,
+          state: "failed",
+        };
+
+        await this.#store.saveTask(failedTask);
+        await this.#logStreamer.append({
+          taskId: nextTask.taskId,
+          type: "task.failed",
+          errorCode: provisioningError.code,
+          message: provisioningError.message,
+        });
+        continue;
+      }
+
+      await this.#startManagedTask(nextTask, allocation, "task.started");
     }
-
-    try {
-      allocation =
-        nextTask.worktreePath === undefined
-          ? await this.#worktreeManager.createWorktree(nextTask.taskId, nextTask.repoPath)
-          : {
-              taskId: nextTask.taskId,
-              repoPath: nextTask.repoPath,
-              branchName: `plato/task-${nextTask.taskId}`,
-              worktreePath: nextTask.worktreePath,
-            };
-    } catch (error) {
-      const provisioningError =
-        error instanceof WorktreeProvisioningError
-          ? error
-          : new WorktreeProvisioningError(
-              error instanceof Error ? error.message : "Unknown worktree provisioning failure",
-              nextTask.taskId,
-              nextTask.repoPath,
-            );
-
-      const failedTask: RunnerTaskRecord = {
-        ...nextTask,
-        state: "failed",
-      };
-
-      await this.#store.saveTask(failedTask);
-      await this.#logStreamer.append({
-        taskId: nextTask.taskId,
-        type: "task.failed",
-        errorCode: provisioningError.code,
-        message: provisioningError.message,
-      });
-      return;
-    }
-
-    await this.#startManagedTask(nextTask, allocation, "task.started");
   }
 
   async #startManagedTask(
@@ -321,7 +319,12 @@ export class CodexRunnerService {
     }
 
     if (session.state === "running") {
-      return undefined;
+      return this.#persistRecoveredTask(task, {
+        sessionId: session.sessionId,
+        recoveredState: "interrupted",
+        errorCode: "TASK_RECOVERY_SESSION_ORPHANED",
+        message: "Recovered running task from a persisted running session after startup",
+      });
     }
 
     if (session.state === "failed") {

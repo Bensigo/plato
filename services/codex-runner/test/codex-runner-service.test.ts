@@ -421,6 +421,61 @@ describe("CodexRunnerService", () => {
     ]);
   });
 
+  it("fills every newly freed slot after a running task completes", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 3,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "first running",
+    });
+    await service.startTask({
+      taskId: "task-2",
+      repoPath: "/repo",
+      prompt: "second running",
+    });
+    await service.startTask({
+      taskId: "task-3",
+      repoPath: "/repo",
+      prompt: "third queued",
+    });
+    await service.startTask({
+      taskId: "task-4",
+      repoPath: "/repo",
+      prompt: "fourth queued",
+    });
+
+    await agentSession.exit("session-1", 0);
+
+    await expect(service.getTask("task-2")).resolves.toMatchObject({
+      taskId: "task-2",
+      state: "running",
+      activeSessionId: "session-2",
+    });
+    await expect(service.getTask("task-3")).resolves.toMatchObject({
+      taskId: "task-3",
+      state: "running",
+      activeSessionId: "session-3",
+    });
+    await expect(service.getTask("task-4")).resolves.toMatchObject({
+      taskId: "task-4",
+      state: "running",
+      activeSessionId: "session-4",
+    });
+  });
+
   it("marks a task failed when the session exits with a non-zero code", async () => {
     const store = new InMemoryRunnerStore();
     const sessionStore = new InMemorySessionStore();
@@ -624,6 +679,77 @@ describe("CodexRunnerService", () => {
         exitCode: 23,
         errorCode: "TASK_RECOVERY_SESSION_FAILED",
         message: "Recovered running task from failed session state",
+      },
+    ]);
+  });
+
+  it("reconciles a persisted running session to interrupted so queued work can continue", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await store.saveTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "recover me",
+      priority: 1,
+      state: "running",
+      worktreePath: "/repo/.plato/worktrees/task-1",
+      activeSessionId: "session-1",
+    });
+    await sessionStore.saveSession({
+      sessionId: "session-1",
+      taskId: "task-1",
+      worktreePath: "/repo/.plato/worktrees/task-1",
+      state: "running",
+      pid: 42,
+    });
+    await store.saveTask({
+      taskId: "task-2",
+      repoPath: "/repo",
+      prompt: "next task",
+      priority: 0,
+      state: "queued",
+    });
+
+    const reconciled = await service.reconcileRunningTasks();
+
+    expect(reconciled).toEqual([
+      {
+        taskId: "task-1",
+        repoPath: "/repo",
+        prompt: "recover me",
+        priority: 1,
+        state: "interrupted",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        activeSessionId: undefined,
+      },
+    ]);
+    await expect(service.getTask("task-2")).resolves.toMatchObject({
+      taskId: "task-2",
+      state: "running",
+      activeSessionId: "session-1",
+      worktreePath: "/repo/.plato/worktrees/task-2",
+    });
+    await expect(service.listEvents("task-1")).resolves.toEqual([
+      {
+        taskId: "task-1",
+        type: "task.reconciled",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        recoveredState: "interrupted",
+        errorCode: "TASK_RECOVERY_SESSION_ORPHANED",
+        message: "Recovered running task from a persisted running session after startup",
       },
     ]);
   });
