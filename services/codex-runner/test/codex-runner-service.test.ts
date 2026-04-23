@@ -1080,6 +1080,164 @@ describe("CodexRunnerService", () => {
     });
   });
 
+  it("runs only dependency-satisfied graph workers while independent workers run concurrently", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 4,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+      },
+      children: [
+        {
+          taskId: "task-api",
+          prompt: "Build API",
+        },
+        {
+          taskId: "task-ui",
+          prompt: "Build UI",
+        },
+        {
+          taskId: "task-integration",
+          prompt: "Wire integration",
+          priority: 100,
+          dependencyTaskIds: ["task-api"],
+        },
+      ],
+    });
+
+    expect(agentSession.started.map((session) => session.taskId)).toEqual([
+      "task-api",
+      "task-parent",
+      "task-ui",
+    ]);
+    await expect(service.getTask("task-integration")).resolves.toMatchObject({
+      taskId: "task-integration",
+      state: "queued",
+      decomposition: {
+        kind: "subtask",
+        parentTaskId: "task-parent",
+        dependencyTaskIds: ["task-api"],
+      },
+    });
+
+    await agentSession.exit("session-1", 0);
+
+    await expect(service.getTask("task-integration")).resolves.toMatchObject({
+      taskId: "task-integration",
+      state: "running",
+      activeSessionId: "session-4",
+    });
+    expect(agentSession.started.map((session) => session.taskId)).toEqual([
+      "task-api",
+      "task-parent",
+      "task-ui",
+      "task-integration",
+    ]);
+    await expect(service.listEvents("task-integration")).resolves.toEqual([
+      { taskId: "task-integration", type: "task.queued" },
+      {
+        taskId: "task-integration",
+        type: "task.graph.dependency.satisfied",
+        parentTaskId: "task-parent",
+        dependencyTaskId: "task-api",
+        dependencyTaskIds: ["task-api"],
+      },
+      {
+        taskId: "task-integration",
+        type: "task.started",
+        sessionId: "session-4",
+        worktreePath: "/repo/.plato/worktrees/task-integration",
+      },
+      {
+        taskId: "task-integration",
+        type: "task.graph.worker.started",
+        parentTaskId: "task-parent",
+        dependencyTaskIds: ["task-api"],
+        sessionId: "session-4",
+        worktreePath: "/repo/.plato/worktrees/task-integration",
+      },
+    ]);
+  });
+
+  it("blocks dependent graph workers when a prerequisite fails", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 3,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+      },
+      children: [
+        {
+          taskId: "task-prereq",
+          prompt: "Build prerequisite",
+        },
+        {
+          taskId: "task-dependent",
+          prompt: "Use prerequisite",
+          dependencyTaskIds: ["task-prereq"],
+        },
+      ],
+    });
+
+    await agentSession.exit("session-2", 1);
+
+    await expect(service.getTask("task-dependent")).resolves.toMatchObject({
+      taskId: "task-dependent",
+      state: "failed",
+      activeSessionId: undefined,
+    });
+    expect(agentSession.started.map((session) => session.taskId)).toEqual([
+      "task-parent",
+      "task-prereq",
+    ]);
+    await expect(service.listEvents("task-dependent")).resolves.toEqual([
+      { taskId: "task-dependent", type: "task.queued" },
+      {
+        taskId: "task-dependent",
+        type: "task.graph.dependency.blocked",
+        parentTaskId: "task-parent",
+        dependencyTaskIds: ["task-prereq"],
+        blockedByTaskIds: ["task-prereq"],
+        errorCode: "TASK_GRAPH_DEPENDENCY_FAILED",
+        message: "Blocked by failed graph dependency task-prereq",
+      },
+      {
+        taskId: "task-dependent",
+        type: "task.failed",
+        errorCode: "TASK_GRAPH_DEPENDENCY_FAILED",
+        message: "Blocked by failed graph dependency task-prereq",
+      },
+    ]);
+  });
+
   it("persists a pending approval checkpoint and resumes with a new session when approved", async () => {
     const store = new InMemoryRunnerStore();
     const sessionStore = new InMemorySessionStore();

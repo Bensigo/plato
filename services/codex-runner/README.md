@@ -64,9 +64,9 @@ The next product step beyond the current foundation is not "more task execution"
 
 ## Task Graphs
 
-`CodexRunnerService.createTaskGraph()` is the durable admission path for submitting one parent task with one or more child tasks. The parent and children are persisted through the store as one graph operation before scheduling begins, and each child is recorded with a `subtask` decomposition that points back to the parent task id.
+`CodexRunnerService.createTaskGraph()` is the durable admission path for submitting one parent task with one or more child tasks. The parent and children are persisted through the store as one graph operation before scheduling begins, and each child is recorded with a `subtask` decomposition that points back to the parent task id. Children can also declare `dependencyTaskIds`; the scheduler only starts queued graph workers after every declared prerequisite has completed.
 
-Operators can inspect graph state with `getTaskGraph(taskId)` or `codex-runner graph status <taskId>`. Passing either a parent id or child id returns the parent, immediate children, and aggregate graph state. Parent-scoped graph lifecycle events are emitted when the graph is created and when child tasks complete or fail.
+Operators can inspect graph state with `getTaskGraph(taskId)` or `codex-runner graph status <taskId>`. Passing either a parent id or child id returns the parent, immediate children, dependencies, and aggregate graph state. Parent-scoped graph lifecycle events are emitted when the graph is created and when child tasks complete or fail. Worker/dependency events are emitted on child task streams when a dependency is satisfied, when a worker starts, or when a failed prerequisite blocks a dependent worker.
 
 As the service grows, keep the domain language centered on `task`, `session`, `worktree`, `interrupt`, and `resume`. Those concepts are already the backbone of the implementation and should stay visible in the public API.
 

@@ -351,6 +351,8 @@ describe("runCodexRunnerCli", () => {
         "Coordinate",
         "--child",
         "task-child:Build API:3",
+        "--child",
+        "task-docs:Write docs:1:task-child",
       ],
       {
         stdout,
@@ -374,6 +376,12 @@ describe("runCodexRunnerCli", () => {
             taskId: "task-child",
             prompt: "Build API",
             priority: 3,
+          },
+          {
+            taskId: "task-docs",
+            prompt: "Write docs",
+            priority: 1,
+            dependencyTaskIds: ["task-child"],
           },
         ],
       },
