@@ -51,12 +51,15 @@ export class CodexRunnerService {
   }
 
   async startTask(input: StartTaskInput): Promise<RunnerTaskRecord> {
+    await this.#validateStartTaskInput(input);
+
     const task: RunnerTaskRecord = {
       taskId: input.taskId,
       repoPath: input.repoPath,
       prompt: input.prompt,
       priority: input.priority ?? 0,
       state: "queued",
+      decomposition: input.decomposition,
     };
 
     await this.#store.saveTask(task);
@@ -232,6 +235,11 @@ export class CodexRunnerService {
     return this.#store.getTask(taskId);
   }
 
+  async listSubtasks(taskId: string): Promise<RunnerTaskRecord[]> {
+    await this.#requireTask(taskId);
+    return this.#store.listChildTasks(taskId);
+  }
+
   async listEvents(taskId: string) {
     return this.#logStreamer.list(taskId);
   }
@@ -252,6 +260,21 @@ export class CodexRunnerService {
     await this.#scheduleQueuedTasks();
 
     return reconciled;
+  }
+
+  async #validateStartTaskInput(input: StartTaskInput): Promise<void> {
+    if (!input.decomposition) {
+      return;
+    }
+
+    if (input.decomposition.parentTaskId === input.taskId) {
+      throw new Error(`Task ${input.taskId} cannot reference itself as a parent`);
+    }
+
+    const parentTask = await this.#store.getTask(input.decomposition.parentTaskId);
+    if (!parentTask) {
+      throw new Error(`Parent task ${input.decomposition.parentTaskId} was not found`);
+    }
   }
 
   async #scheduleQueuedTasks(): Promise<void> {

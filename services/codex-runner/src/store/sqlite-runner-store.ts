@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import type { RunnerStore, RunnerTaskRecord, RunnerTaskState } from "../contracts.js";
+import type { RunnerStore, RunnerTaskDecomposition, RunnerTaskRecord, RunnerTaskState } from "../contracts.js";
 
 interface RunnerTaskRow {
   task_id: string;
@@ -10,6 +10,8 @@ interface RunnerTaskRow {
   state: RunnerTaskState;
   worktree_path: string | null;
   active_session_id: string | null;
+  decomposition_kind: RunnerTaskDecomposition["kind"] | null;
+  parent_task_id: string | null;
   pending_approval_request_id: string | null;
   pending_approval_requested_action: string | null;
   pending_approval_reason: string | null;
@@ -34,11 +36,13 @@ export class SqliteRunnerStore implements RunnerStore {
           state,
           worktree_path,
           active_session_id,
+          decomposition_kind,
+          parent_task_id,
           pending_approval_request_id,
           pending_approval_requested_action,
           pending_approval_reason,
           pending_approval_session_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_id) DO UPDATE SET
           repo_path = excluded.repo_path,
           prompt = excluded.prompt,
@@ -46,6 +50,8 @@ export class SqliteRunnerStore implements RunnerStore {
           state = excluded.state,
           worktree_path = excluded.worktree_path,
           active_session_id = excluded.active_session_id,
+          decomposition_kind = excluded.decomposition_kind,
+          parent_task_id = excluded.parent_task_id,
           pending_approval_request_id = excluded.pending_approval_request_id,
           pending_approval_requested_action = excluded.pending_approval_requested_action,
           pending_approval_reason = excluded.pending_approval_reason,
@@ -60,6 +66,8 @@ export class SqliteRunnerStore implements RunnerStore {
         task.state,
         task.worktreePath ?? null,
         task.activeSessionId ?? null,
+        task.decomposition?.kind ?? null,
+        task.decomposition?.parentTaskId ?? null,
         task.pendingApproval?.approvalRequestId ?? null,
         task.pendingApproval?.requestedAction ?? null,
         task.pendingApproval?.reason ?? null,
@@ -79,6 +87,8 @@ export class SqliteRunnerStore implements RunnerStore {
             state,
             worktree_path,
             active_session_id,
+            decomposition_kind,
+            parent_task_id,
             pending_approval_request_id,
             pending_approval_requested_action,
             pending_approval_reason,
@@ -104,6 +114,8 @@ export class SqliteRunnerStore implements RunnerStore {
             state,
             worktree_path,
             active_session_id,
+            decomposition_kind,
+            parent_task_id,
             pending_approval_request_id,
             pending_approval_requested_action,
             pending_approval_reason,
@@ -114,6 +126,34 @@ export class SqliteRunnerStore implements RunnerStore {
         `,
       )
       .all(state) as unknown as RunnerTaskRow[];
+
+    return rows.map(mapRunnerTaskRow);
+  }
+
+  async listChildTasks(parentTaskId: string): Promise<RunnerTaskRecord[]> {
+    const rows = this.#connection
+      .prepare(
+        `
+          SELECT
+            task_id,
+            repo_path,
+            prompt,
+            priority,
+            state,
+            worktree_path,
+            active_session_id,
+            decomposition_kind,
+            parent_task_id,
+            pending_approval_request_id,
+            pending_approval_requested_action,
+            pending_approval_reason,
+            pending_approval_session_id
+          FROM runner_tasks
+          WHERE parent_task_id = ?
+          ORDER BY rowid ASC
+        `,
+      )
+      .all(parentTaskId) as unknown as RunnerTaskRow[];
 
     return rows.map(mapRunnerTaskRow);
   }
@@ -128,6 +168,14 @@ function mapRunnerTaskRow(row: RunnerTaskRow): RunnerTaskRecord {
     state: row.state,
     worktreePath: row.worktree_path ?? undefined,
     activeSessionId: row.active_session_id ?? undefined,
+    ...(row.decomposition_kind && row.parent_task_id
+      ? {
+          decomposition: {
+            kind: row.decomposition_kind,
+            parentTaskId: row.parent_task_id,
+          },
+        }
+      : {}),
     ...(row.pending_approval_request_id &&
     row.pending_approval_requested_action &&
     row.pending_approval_reason &&

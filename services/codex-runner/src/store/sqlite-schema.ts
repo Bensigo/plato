@@ -10,12 +10,18 @@ export function bootstrapCodexRunnerSchema(connection: DatabaseSync): void {
       state TEXT NOT NULL,
       worktree_path TEXT,
       active_session_id TEXT,
+      decomposition_kind TEXT,
+      parent_task_id TEXT,
       pending_approval_request_id TEXT,
       pending_approval_requested_action TEXT,
       pending_approval_reason TEXT,
       pending_approval_session_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CHECK (
+        (parent_task_id IS NULL AND decomposition_kind IS NULL)
+        OR (parent_task_id IS NOT NULL AND decomposition_kind = 'subtask')
+      ),
       CHECK (
         (pending_approval_request_id IS NULL AND pending_approval_requested_action IS NULL
          AND pending_approval_reason IS NULL AND pending_approval_session_id IS NULL)
@@ -54,6 +60,8 @@ export function bootstrapCodexRunnerSchema(connection: DatabaseSync): void {
   `);
 
   ensureColumn(connection, "runner_tasks", "pending_approval_request_id", "TEXT");
+  ensureColumn(connection, "runner_tasks", "decomposition_kind", "TEXT");
+  ensureColumn(connection, "runner_tasks", "parent_task_id", "TEXT");
   ensureColumn(connection, "runner_tasks", "pending_approval_requested_action", "TEXT");
   ensureColumn(connection, "runner_tasks", "pending_approval_reason", "TEXT");
   ensureColumn(connection, "runner_tasks", "pending_approval_session_id", "TEXT");
@@ -61,6 +69,11 @@ export function bootstrapCodexRunnerSchema(connection: DatabaseSync): void {
   ensureColumn(connection, "runner_sessions", "pending_approval_requested_action", "TEXT");
   ensureColumn(connection, "runner_sessions", "pending_approval_reason", "TEXT");
   ensureColumn(connection, "runner_sessions", "pending_approval_session_id", "TEXT");
+
+  connection.exec(`
+    CREATE INDEX IF NOT EXISTS runner_tasks_parent_task_id_idx
+      ON runner_tasks (parent_task_id);
+  `);
 }
 
 function ensureColumn(

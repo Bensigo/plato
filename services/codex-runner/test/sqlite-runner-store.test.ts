@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { RunnerTaskRecord } from "../src/contracts.js";
@@ -74,6 +75,60 @@ describe("SqliteRunnerStore", () => {
       buildTask("task-2", "running"),
       buildTask("task-3", "running"),
     ]);
+    persistence.close();
+  });
+
+  it("adds the parent task index after upgrading an existing database", async () => {
+    const tempDir = await createTempDir("codex-runner-store-");
+    tempDirs.push(tempDir);
+    const filePath = `${tempDir}/runner.sqlite`;
+
+    const connection = new DatabaseSync(filePath);
+    connection.exec(`
+      CREATE TABLE runner_tasks (
+        task_id TEXT PRIMARY KEY,
+        repo_path TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        priority INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        worktree_path TEXT,
+        active_session_id TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX runner_tasks_state_idx
+        ON runner_tasks (state);
+
+      CREATE TABLE runner_sessions (
+        session_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        worktree_path TEXT NOT NULL,
+        pid INTEGER,
+        state TEXT NOT NULL,
+        exit_code INTEGER,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(task_id) REFERENCES runner_tasks(task_id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX runner_sessions_task_id_idx
+        ON runner_sessions (task_id);
+    `);
+    connection.close();
+
+    const persistence = openCodexRunnerPersistence({ filePath });
+
+    const columns = persistence.database.connection
+      .prepare("PRAGMA table_info(runner_tasks)")
+      .all() as Array<{ name: string }>;
+    expect(columns.some((column) => column.name === "parent_task_id")).toBe(true);
+
+    const indexes = persistence.database.connection
+      .prepare("PRAGMA index_list(runner_tasks)")
+      .all() as Array<{ name: string }>;
+    expect(indexes.some((index) => index.name === "runner_tasks_parent_task_id_idx")).toBe(true);
+
     persistence.close();
   });
 });

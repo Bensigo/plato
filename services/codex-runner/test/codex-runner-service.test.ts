@@ -36,6 +36,12 @@ class InMemoryRunnerStore implements RunnerStore {
   async listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]> {
     return [...this.#tasks.values()].filter((task) => task.state === state);
   }
+
+  async listChildTasks(parentTaskId: string): Promise<RunnerTaskRecord[]> {
+    return [...this.#tasks.values()].filter(
+      (task) => task.decomposition?.parentTaskId === parentTaskId,
+    );
+  }
 }
 
 class InMemoryLogStreamer implements LogStreamer {
@@ -246,6 +252,65 @@ describe("CodexRunnerService", () => {
         message: "codex install failed",
       },
     ]);
+  });
+
+  it("creates a subtask with a durable parent-child relationship", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 2,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.startTask({
+      taskId: "task-parent",
+      repoPath: "/repo",
+      prompt: "Parent task",
+    });
+
+    const subtask = await service.startTask({
+      taskId: "task-child",
+      repoPath: "/repo",
+      prompt: "Child task",
+      decomposition: {
+        kind: "subtask",
+        parentTaskId: "task-parent",
+      },
+    });
+
+    expect(subtask.decomposition).toEqual({
+      kind: "subtask",
+      parentTaskId: "task-parent",
+    });
+    await expect(service.listSubtasks("task-parent")).resolves.toEqual([subtask]);
+  });
+
+  it("rejects a subtask when its parent task does not exist", async () => {
+    const service = new CodexRunnerService({
+      store: new InMemoryRunnerStore(),
+      sessionStore: new InMemorySessionStore(),
+      logStreamer: new InMemoryLogStreamer(),
+      worktreeManager: new FakeWorktreeManager(),
+    });
+
+    await expect(
+      service.startTask({
+        taskId: "task-child",
+        repoPath: "/repo",
+        prompt: "Child task",
+        decomposition: {
+          kind: "subtask",
+          parentTaskId: "task-parent",
+        },
+      }),
+    ).rejects.toThrow("Parent task task-parent was not found");
   });
 
   it("leaves later tasks queued when the pool is full", async () => {
