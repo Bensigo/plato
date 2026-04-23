@@ -76,9 +76,11 @@ export interface SessionEvent {
     | "task.failed"
     | "task.interrupted"
     | "task.completed"
-    | "task.resumed";
+    | "task.resumed"
+    | "task.reconciled";
   sessionId?: string;
   worktreePath?: string;
+  recoveredState?: "interrupted" | "failed";
   errorCode?: string;
   message?: string;
   stream?: "stdout" | "stderr";

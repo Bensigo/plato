@@ -125,6 +125,24 @@ export class CodexRunnerService {
     return this.#logStreamer.list(taskId);
   }
 
+  async reconcileRunningTasks(): Promise<RunnerTaskRecord[]> {
+    const runningTasks = (await this.#store.listTasksByState("running"))
+      .slice()
+      .sort((left, right) => left.taskId.localeCompare(right.taskId));
+    const reconciled: RunnerTaskRecord[] = [];
+
+    for (const task of runningTasks) {
+      const nextTask = await this.#reconcileRunningTask(task);
+      if (nextTask) {
+        reconciled.push(nextTask);
+      }
+    }
+
+    await this.#scheduleQueuedTasks();
+
+    return reconciled;
+  }
+
   async #scheduleQueuedTasks(): Promise<void> {
     if (!(await this.#hasCapacity())) {
       return;
@@ -280,6 +298,90 @@ export class CodexRunnerService {
           },
     );
     await this.#scheduleQueuedTasks();
+  }
+
+  async #reconcileRunningTask(task: RunnerTaskRecord): Promise<RunnerTaskRecord | undefined> {
+    const activeSessionId = task.activeSessionId;
+    if (!activeSessionId) {
+      return this.#persistRecoveredTask(task, {
+        recoveredState: "interrupted",
+        errorCode: "TASK_RECOVERY_SESSION_MISSING",
+        message: "Recovered running task without an active session reference",
+      });
+    }
+
+    const session = await this.#sessionStore.getSession(activeSessionId);
+    if (!session || session.taskId !== task.taskId) {
+      return this.#persistRecoveredTask(task, {
+        sessionId: activeSessionId,
+        recoveredState: "interrupted",
+        errorCode: "TASK_RECOVERY_SESSION_MISSING",
+        message: "Recovered running task without a persisted active session",
+      });
+    }
+
+    if (session.state === "running") {
+      return undefined;
+    }
+
+    if (session.state === "failed") {
+      return this.#persistRecoveredTask(task, {
+        sessionId: session.sessionId,
+        recoveredState: "failed",
+        errorCode: "TASK_RECOVERY_SESSION_FAILED",
+        message: "Recovered running task from failed session state",
+        exitCode: session.exitCode,
+      });
+    }
+
+    if (session.state === "interrupted") {
+      return this.#persistRecoveredTask(task, {
+        sessionId: session.sessionId,
+        recoveredState: "interrupted",
+        errorCode: "TASK_RECOVERY_SESSION_INTERRUPTED",
+        message: "Recovered running task from interrupted session state",
+        exitCode: session.exitCode,
+      });
+    }
+
+    return this.#persistRecoveredTask(task, {
+      sessionId: session.sessionId,
+      recoveredState: "failed",
+      errorCode: "TASK_RECOVERY_SESSION_COMPLETED",
+      message: "Recovered running task from completed session state without a terminal task transition",
+      exitCode: session.exitCode,
+    });
+  }
+
+  async #persistRecoveredTask(
+    task: RunnerTaskRecord,
+    recovery: {
+      sessionId?: string;
+      recoveredState: "interrupted" | "failed";
+      errorCode: string;
+      message: string;
+      exitCode?: number | null;
+    },
+  ): Promise<RunnerTaskRecord> {
+    const reconciledTask: RunnerTaskRecord = {
+      ...task,
+      state: recovery.recoveredState,
+      activeSessionId: undefined,
+    };
+
+    await this.#store.saveTask(reconciledTask);
+    await this.#logStreamer.append({
+      taskId: task.taskId,
+      type: "task.reconciled",
+      sessionId: recovery.sessionId,
+      worktreePath: task.worktreePath,
+      recoveredState: recovery.recoveredState,
+      errorCode: recovery.errorCode,
+      message: recovery.message,
+      exitCode: recovery.exitCode,
+    });
+
+    return reconciledTask;
   }
 
   async #hasCapacity(): Promise<boolean> {

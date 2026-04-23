@@ -505,4 +505,126 @@ describe("CodexRunnerService", () => {
       activeSessionId: undefined,
     });
   });
+
+  it("reconciles a running task with a missing active session to interrupted", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+    });
+
+    await store.saveTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "recover me",
+      priority: 0,
+      state: "running",
+      worktreePath: "/repo/.plato/worktrees/task-1",
+      activeSessionId: "session-missing",
+    });
+
+    const reconciled = await service.reconcileRunningTasks();
+
+    expect(reconciled).toEqual([
+      {
+        taskId: "task-1",
+        repoPath: "/repo",
+        prompt: "recover me",
+        priority: 0,
+        state: "interrupted",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        activeSessionId: undefined,
+      },
+    ]);
+    await expect(service.getTask("task-1")).resolves.toEqual(reconciled[0]);
+    await expect(service.listEvents("task-1")).resolves.toEqual([
+      {
+        taskId: "task-1",
+        type: "task.reconciled",
+        sessionId: "session-missing",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        recoveredState: "interrupted",
+        errorCode: "TASK_RECOVERY_SESSION_MISSING",
+        message: "Recovered running task without a persisted active session",
+      },
+    ]);
+  });
+
+  it("reconciles a running task with a terminal failed session to failed and schedules queued work", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await store.saveTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "recover me",
+      priority: 1,
+      state: "running",
+      worktreePath: "/repo/.plato/worktrees/task-1",
+      activeSessionId: "session-1",
+    });
+    await sessionStore.saveSession({
+      sessionId: "session-1",
+      taskId: "task-1",
+      worktreePath: "/repo/.plato/worktrees/task-1",
+      state: "failed",
+      exitCode: 23,
+    });
+    await store.saveTask({
+      taskId: "task-2",
+      repoPath: "/repo",
+      prompt: "next task",
+      priority: 0,
+      state: "queued",
+    });
+
+    const reconciled = await service.reconcileRunningTasks();
+
+    expect(reconciled).toEqual([
+      {
+        taskId: "task-1",
+        repoPath: "/repo",
+        prompt: "recover me",
+        priority: 1,
+        state: "failed",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        activeSessionId: undefined,
+      },
+    ]);
+    await expect(service.getTask("task-2")).resolves.toMatchObject({
+      taskId: "task-2",
+      state: "running",
+      activeSessionId: "session-1",
+      worktreePath: "/repo/.plato/worktrees/task-2",
+    });
+    await expect(service.listEvents("task-1")).resolves.toEqual([
+      {
+        taskId: "task-1",
+        type: "task.reconciled",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        recoveredState: "failed",
+        exitCode: 23,
+        errorCode: "TASK_RECOVERY_SESSION_FAILED",
+        message: "Recovered running task from failed session state",
+      },
+    ]);
+  });
 });
