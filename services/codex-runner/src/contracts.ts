@@ -36,11 +36,22 @@ export interface RunnerTaskRecord {
   activeSessionId?: string;
 }
 
+export type RunnerSessionState =
+  | "running"
+  | "completed"
+  | "failed"
+  | "interrupted";
+
 export interface ManagedSession {
   sessionId: string;
   taskId: string;
   worktreePath: string;
   pid?: number;
+}
+
+export interface RunnerSessionRecord extends ManagedSession {
+  state: RunnerSessionState;
+  exitCode?: number | null;
 }
 
 export interface WorktreeAllocation {
@@ -81,6 +92,12 @@ export interface RunnerStore {
   listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]>;
 }
 
+export interface SessionStore {
+  saveSession(session: RunnerSessionRecord): Promise<void>;
+  getSession(sessionId: string): Promise<RunnerSessionRecord | undefined>;
+  listSessionsByTask(taskId: string): Promise<RunnerSessionRecord[]>;
+}
+
 export interface RunnerStoreRecord {
   tasks: RunnerTaskRecord[];
 }
@@ -92,6 +109,10 @@ export interface WorktreeManager {
 export interface ProcessEventHandlers {
   onStdoutLine?: (line: string) => Promise<void> | void;
   onStderrLine?: (line: string) => Promise<void> | void;
+  onExit?: (exitCode: number | null) => Promise<void> | void;
+}
+
+export interface AgentSessionHandlers {
   onExit?: (exitCode: number | null) => Promise<void> | void;
 }
 
@@ -112,7 +133,11 @@ export interface LogStreamRecord {
 }
 
 export interface AgentSession {
-  start(task: RunnerTaskRecord, worktree: WorktreeAllocation): Promise<ManagedSession>;
+  start(
+    task: RunnerTaskRecord,
+    worktree: WorktreeAllocation,
+    handlers?: AgentSessionHandlers,
+  ): Promise<ManagedSession>;
 }
 
 export interface AgentSessionFactory {

@@ -2,14 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import { CodexRunnerService } from "../src/codex-runner-service.js";
 import {
+  type AgentSession,
+  type AgentSessionFactory,
   type CodexRuntimeManager,
   WorktreeProvisioningError,
   type LogStreamer,
   ManagedSession,
   ProcessPool,
   RunnerStore,
+  type RunnerSessionRecord,
+  type RunnerSessionState,
   RunnerTaskRecord,
   RunnerTaskState,
+  SessionStore,
   SessionEvent,
   WorktreeAllocation,
   WorktreeManager,
@@ -45,6 +50,22 @@ class InMemoryLogStreamer implements LogStreamer {
   }
 }
 
+class InMemorySessionStore implements SessionStore {
+  readonly #sessions = new Map<string, RunnerSessionRecord>();
+
+  async saveSession(session: RunnerSessionRecord): Promise<void> {
+    this.#sessions.set(session.sessionId, session);
+  }
+
+  async getSession(sessionId: string): Promise<RunnerSessionRecord | undefined> {
+    return this.#sessions.get(sessionId);
+  }
+
+  async listSessionsByTask(taskId: string): Promise<RunnerSessionRecord[]> {
+    return [...this.#sessions.values()].filter((session) => session.taskId === taskId);
+  }
+}
+
 class FakeWorktreeManager implements WorktreeManager {
   readonly allocations: WorktreeAllocation[] = [];
   failure?: Error;
@@ -77,7 +98,7 @@ class FakeProcessPool implements ProcessPool {
   }
 
   async spawn(task: RunnerTaskRecord, worktree: WorktreeAllocation): Promise<ManagedSession> {
-    this.#activeSessions += 1;
+    this.reserve();
     const session = {
       sessionId: `session-${this.spawns.length + 1}`,
       taskId: task.taskId,
@@ -91,6 +112,14 @@ class FakeProcessPool implements ProcessPool {
 
   async interrupt(sessionId: string): Promise<void> {
     this.interrupted.push(sessionId);
+    this.release();
+  }
+
+  reserve(): void {
+    this.#activeSessions += 1;
+  }
+
+  release(): void {
     if (this.#activeSessions > 0) {
       this.#activeSessions -= 1;
     }
@@ -109,14 +138,65 @@ class FakeRuntimeManager implements CodexRuntimeManager {
   }
 }
 
+class FakeAgentSession implements AgentSession {
+  readonly started: {
+    taskId: string;
+    worktreePath: string;
+    sessionId: string;
+  }[] = [];
+  readonly #exitHandlers = new Map<string, (exitCode: number | null) => Promise<void> | void>();
+
+  constructor(private readonly processPool: FakeProcessPool) {}
+
+  async start(
+    task: RunnerTaskRecord,
+    worktree: WorktreeAllocation,
+    handlers?: { onExit?: (exitCode: number | null) => Promise<void> | void },
+  ): Promise<ManagedSession> {
+    const sessionId = `session-${this.started.length + 1}`;
+    this.processPool.reserve();
+    this.started.push({
+      taskId: task.taskId,
+      worktreePath: worktree.worktreePath,
+      sessionId,
+    });
+
+    if (handlers?.onExit) {
+      this.#exitHandlers.set(sessionId, handlers.onExit);
+    }
+
+    return {
+      sessionId,
+      taskId: task.taskId,
+      worktreePath: worktree.worktreePath,
+      pid: this.started.length,
+    };
+  }
+
+  async exit(sessionId: string, exitCode: number | null): Promise<void> {
+    this.processPool.release();
+    await this.#exitHandlers.get(sessionId)?.(exitCode);
+  }
+}
+
+class FakeAgentSessionFactory implements AgentSessionFactory {
+  constructor(readonly session: FakeAgentSession) {}
+
+  create(): AgentSession {
+    return this.session;
+  }
+}
+
 describe("CodexRunnerService", () => {
   it("starts a task immediately when process capacity is available", async () => {
     const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
     const logStreamer = new InMemoryLogStreamer();
     const worktreeManager = new FakeWorktreeManager();
     const processPool = new FakeProcessPool(1);
     const service = new CodexRunnerService({
       store,
+      sessionStore,
       logStreamer,
       worktreeManager,
       processPool,
@@ -137,6 +217,13 @@ describe("CodexRunnerService", () => {
       { taskId: "task-1", type: "task.queued" },
       {
         taskId: "task-1",
+        type: "session.started",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        pid: undefined,
+      },
+      {
+        taskId: "task-1",
         type: "task.started",
         sessionId: "session-1",
         worktreePath: "/repo/.plato/worktrees/task-1",
@@ -146,6 +233,7 @@ describe("CodexRunnerService", () => {
 
   it("fails the task when codex runtime bootstrap fails", async () => {
     const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
     const logStreamer = new InMemoryLogStreamer();
     const worktreeManager = new FakeWorktreeManager();
     const processPool = new FakeProcessPool(1);
@@ -153,6 +241,7 @@ describe("CodexRunnerService", () => {
     runtimeManager.failure = new Error("codex install failed");
     const service = new CodexRunnerService({
       store,
+      sessionStore,
       logStreamer,
       worktreeManager,
       processPool,
@@ -182,11 +271,13 @@ describe("CodexRunnerService", () => {
 
   it("leaves later tasks queued when the pool is full", async () => {
     const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
     const logStreamer = new InMemoryLogStreamer();
     const worktreeManager = new FakeWorktreeManager();
     const processPool = new FakeProcessPool(1);
     const service = new CodexRunnerService({
       store,
+      sessionStore,
       logStreamer,
       worktreeManager,
       processPool,
@@ -211,6 +302,7 @@ describe("CodexRunnerService", () => {
 
   it("fails the task when worktree provisioning fails", async () => {
     const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
     const logStreamer = new InMemoryLogStreamer();
     const worktreeManager = new FakeWorktreeManager();
     worktreeManager.failure = new WorktreeProvisioningError(
@@ -221,6 +313,7 @@ describe("CodexRunnerService", () => {
     const processPool = new FakeProcessPool(1);
     const service = new CodexRunnerService({
       store,
+      sessionStore,
       logStreamer,
       worktreeManager,
       processPool,
@@ -249,14 +342,18 @@ describe("CodexRunnerService", () => {
 
   it("resumes an interrupted task in the same worktree", async () => {
     const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
     const logStreamer = new InMemoryLogStreamer();
     const worktreeManager = new FakeWorktreeManager();
     const processPool = new FakeProcessPool(1);
+    const agentSession = new FakeAgentSession(processPool);
     const service = new CodexRunnerService({
       store,
+      sessionStore,
       logStreamer,
       worktreeManager,
       processPool,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
     });
 
     await service.startTask({
@@ -269,11 +366,26 @@ describe("CodexRunnerService", () => {
     const resumed = await service.resumeTask("task-1");
 
     expect(processPool.interrupted).toEqual(["session-1"]);
-    expect(processPool.spawns).toHaveLength(2);
+    expect(processPool.spawns).toHaveLength(0);
     expect(resumed.state).toBe("running");
     expect(resumed.worktreePath).toBe("/repo/.plato/worktrees/task-1");
     expect(resumed.activeSessionId).toBe("session-2");
     expect(worktreeManager.allocations).toHaveLength(1);
+    await expect(sessionStore.listSessionsByTask("task-1")).resolves.toEqual([
+      {
+        sessionId: "session-1",
+        taskId: "task-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        state: "interrupted",
+      },
+      {
+        sessionId: "session-2",
+        taskId: "task-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        state: "running",
+        pid: 2,
+      },
+    ]);
 
     await expect(service.listEvents("task-1")).resolves.toEqual([
       { taskId: "task-1", type: "task.queued" },
@@ -293,6 +405,128 @@ describe("CodexRunnerService", () => {
         type: "task.resumed",
         sessionId: "session-2",
         worktreePath: "/repo/.plato/worktrees/task-1",
+      },
+    ]);
+  });
+
+  it("completes a task and schedules the next queued task when the session exits successfully", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const processPool = new FakeProcessPool(1);
+    const agentSession = new FakeAgentSession(processPool);
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      processPool,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    const firstTask = await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "first",
+    });
+    const secondTask = await service.startTask({
+      taskId: "task-2",
+      repoPath: "/repo",
+      prompt: "second",
+    });
+
+    expect(firstTask.state).toBe("running");
+    expect(secondTask.state).toBe("queued");
+
+    await agentSession.exit("session-1", 0);
+
+    await expect(service.getTask("task-1")).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "completed",
+      activeSessionId: undefined,
+    });
+    await expect(service.getTask("task-2")).resolves.toMatchObject({
+      taskId: "task-2",
+      state: "running",
+      activeSessionId: "session-2",
+    });
+    await expect(sessionStore.getSession("session-1")).resolves.toMatchObject({
+      sessionId: "session-1",
+      taskId: "task-1",
+      state: "completed",
+      exitCode: 0,
+    });
+
+    await expect(service.listEvents("task-1")).resolves.toEqual([
+      { taskId: "task-1", type: "task.queued" },
+      {
+        taskId: "task-1",
+        type: "task.started",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+      },
+      {
+        taskId: "task-1",
+        type: "task.completed",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        exitCode: 0,
+      },
+    ]);
+  });
+
+  it("marks a task failed when the session exits with a non-zero code", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const processPool = new FakeProcessPool(1);
+    const agentSession = new FakeAgentSession(processPool);
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      processPool,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "failing task",
+    });
+
+    await agentSession.exit("session-1", 23);
+
+    await expect(service.getTask("task-1")).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "failed",
+      activeSessionId: undefined,
+    });
+    await expect(sessionStore.getSession("session-1")).resolves.toMatchObject({
+      sessionId: "session-1",
+      taskId: "task-1",
+      state: "failed",
+      exitCode: 23,
+    });
+    await expect(service.listEvents("task-1")).resolves.toEqual([
+      { taskId: "task-1", type: "task.queued" },
+      {
+        taskId: "task-1",
+        type: "task.started",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+      },
+      {
+        taskId: "task-1",
+        type: "task.failed",
+        sessionId: "session-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+        exitCode: 23,
+        errorCode: "TASK_EXIT_NON_ZERO",
+        message: "Task exited with code 23",
       },
     ]);
   });

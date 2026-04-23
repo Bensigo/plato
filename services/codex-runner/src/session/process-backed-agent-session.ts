@@ -1,5 +1,6 @@
 import type {
   AgentSession,
+  AgentSessionHandlers,
   AgentSessionFactory,
   LogStreamer,
   ManagedSession,
@@ -17,7 +18,11 @@ export class ProcessBackedAgentSession implements AgentSession {
     this.#logStreamer = logStreamer;
   }
 
-  async start(task: RunnerTaskRecord, worktree: WorktreeAllocation): Promise<ManagedSession> {
+  async start(
+    task: RunnerTaskRecord,
+    worktree: WorktreeAllocation,
+    handlers?: AgentSessionHandlers,
+  ): Promise<ManagedSession> {
     const session = await this.#processPool.spawn(task, worktree);
 
     await this.#logStreamer.append({
@@ -57,6 +62,7 @@ export class ProcessBackedAgentSession implements AgentSession {
           worktreePath: worktree.worktreePath,
           exitCode,
         });
+        await handlers?.onExit?.(exitCode);
       },
     });
 

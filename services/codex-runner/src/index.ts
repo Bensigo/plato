@@ -6,4 +6,5 @@ export * from "./runtime/codex-runtime-manager.js";
 export * from "./session/codex-app-server-command.js";
 export * from "./session/process-backed-agent-session.js";
 export * from "./store/file-runner-store.js";
+export * from "./store/file-session-store.js";
 export * from "./worktree/git-worktree-manager.js";
