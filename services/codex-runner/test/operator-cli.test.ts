@@ -45,6 +45,9 @@ describe("runCodexRunnerCli", () => {
       async listTasks() {
         return [];
       },
+      async listTasksByState() {
+        return [];
+      },
       async listEvents() {
         return [];
       },
@@ -127,6 +130,9 @@ describe("runCodexRunnerCli", () => {
       async listTasks() {
         return [];
       },
+      async listTasksByState() {
+        return [];
+      },
       async listEvents() {
         return [];
       },
@@ -147,7 +153,7 @@ describe("runCodexRunnerCli", () => {
     expect(JSON.parse(stdout.value)).toEqual(snapshot);
   });
 
-  it("filters task listings by state", async () => {
+  it("filters task listings by state via the indexed operator path", async () => {
     const stdout = new BufferWriter();
     const stderr = new BufferWriter();
     const tasks: RunnerTaskRecord[] = [
@@ -177,7 +183,10 @@ describe("runCodexRunnerCli", () => {
         return undefined;
       },
       async listTasks() {
-        return tasks;
+        throw new Error("full task scan should not be used");
+      },
+      async listTasksByState(state) {
+        return tasks.filter((task) => task.state === state);
       },
       async listEvents() {
         return [];
@@ -219,6 +228,9 @@ describe("runCodexRunnerCli", () => {
         return undefined;
       },
       async listTasks() {
+        return [];
+      },
+      async listTasksByState() {
         return [];
       },
       async listEvents(taskId) {
@@ -270,6 +282,9 @@ describe("runCodexRunnerCli", () => {
         return snapshot;
       },
       async listTasks() {
+        return [];
+      },
+      async listTasksByState() {
         return [];
       },
       async listEvents() {

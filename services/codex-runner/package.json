@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "codex-runner": "./dist/cli.js"
+    "codex-runner": "./dist/src/cli.js"
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",

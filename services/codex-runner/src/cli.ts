@@ -30,6 +30,7 @@ export interface RunnerOperatorClient {
   getTask(taskId: string): Promise<RunnerTaskRecord | undefined>;
   getTaskStatus(taskId: string): Promise<RunnerTaskStatusSnapshot | undefined>;
   listTasks(): Promise<RunnerTaskRecord[]>;
+  listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]>;
   listEvents(taskId: string): Promise<SessionEvent[]>;
   interruptTask(taskId: string): Promise<void>;
   resumeTask(taskId: string): Promise<RunnerTaskRecord>;
@@ -191,9 +192,9 @@ async function handleStatus(
     }
 
     const requestedState = parseOptionalState(parsed.values.state);
-    const tasks = (await runtime.service.listTasks()).filter((task) =>
-      requestedState ? task.state === requestedState : true,
-    );
+    const tasks = requestedState
+      ? await runtime.service.listTasksByState(requestedState)
+      : await runtime.service.listTasks();
 
     writeJson(options.stdout ?? process.stdout, { tasks });
     return 0;
