@@ -24,6 +24,7 @@ export interface StartTaskInput {
   repoPath: string;
   prompt: string;
   priority?: number;
+  decomposition?: RunnerTaskDecomposition;
 }
 
 export interface PendingApprovalRecord {
@@ -40,6 +41,13 @@ export interface RequestTaskApprovalInput {
   sessionId?: string;
 }
 
+export type RunnerTaskDecompositionKind = "subtask";
+
+export interface RunnerTaskDecomposition {
+  kind: RunnerTaskDecompositionKind;
+  parentTaskId: string;
+}
+
 export interface RunnerTaskRecord {
   taskId: string;
   repoPath: string;
@@ -48,6 +56,7 @@ export interface RunnerTaskRecord {
   state: RunnerTaskState;
   worktreePath?: string;
   activeSessionId?: string;
+  decomposition?: RunnerTaskDecomposition;
   pendingApproval?: PendingApprovalRecord;
 }
 
@@ -138,6 +147,7 @@ export interface RunnerStore {
   saveTask(task: RunnerTaskRecord): Promise<void>;
   getTask(taskId: string): Promise<RunnerTaskRecord | undefined>;
   listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]>;
+  listChildTasks(parentTaskId: string): Promise<RunnerTaskRecord[]>;
 }
 
 export interface SessionStore {

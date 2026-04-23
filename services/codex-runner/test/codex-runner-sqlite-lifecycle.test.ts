@@ -100,6 +100,57 @@ afterEach(async () => {
 });
 
 describe("CodexRunnerService with SQLite-backed stores", () => {
+  it("persists a child task decomposition and lists subtasks through SQLite stores", async () => {
+    const tempDir = await createTempDir("codex-runner-sqlite-");
+    tempDirs.push(tempDir);
+    const persistence = openCodexRunnerPersistence({
+      filePath: `${tempDir}/runner.sqlite`,
+    });
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store: persistence.store,
+      sessionStore: persistence.sessionStore,
+      logStreamer: new InMemoryLogStreamer(),
+      worktreeManager: new FakeWorktreeManager(),
+      maxConcurrentTasks: 0,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.startTask({
+      taskId: "task-parent",
+      repoPath: "/repo",
+      prompt: "Parent task",
+    });
+    await service.startTask({
+      taskId: "task-child",
+      repoPath: "/repo",
+      prompt: "Child task",
+      decomposition: {
+        kind: "subtask",
+        parentTaskId: "task-parent",
+      },
+    });
+
+    await expect(service.getTask("task-child")).resolves.toMatchObject({
+      taskId: "task-child",
+      state: "queued",
+      decomposition: {
+        kind: "subtask",
+        parentTaskId: "task-parent",
+      },
+    });
+    await expect(service.listSubtasks("task-parent")).resolves.toEqual([
+      expect.objectContaining({
+        taskId: "task-child",
+        decomposition: {
+          kind: "subtask",
+          parentTaskId: "task-parent",
+        },
+      }),
+    ]);
+    persistence.close();
+  });
+
   it("completes a task and persists the terminal session state", async () => {
     const tempDir = await createTempDir("codex-runner-sqlite-");
     tempDirs.push(tempDir);
