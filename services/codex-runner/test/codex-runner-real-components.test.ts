@@ -6,7 +6,9 @@ import type {
   LogStreamer,
   ManagedSession,
   ProcessPool,
+  RunnerSessionRecord,
   SessionEvent,
+  SessionStore,
   WorktreeAllocation,
   RunnerTaskRecord,
 } from "../src/contracts.js";
@@ -25,6 +27,22 @@ class InMemoryLogStreamer implements LogStreamer {
 
   async list(taskId: string): Promise<SessionEvent[]> {
     return this.#events.get(taskId) ?? [];
+  }
+}
+
+class InMemorySessionStore implements SessionStore {
+  readonly #sessions = new Map<string, RunnerSessionRecord>();
+
+  async saveSession(session: RunnerSessionRecord): Promise<void> {
+    this.#sessions.set(session.sessionId, session);
+  }
+
+  async getSession(sessionId: string): Promise<RunnerSessionRecord | undefined> {
+    return this.#sessions.get(sessionId);
+  }
+
+  async listSessionsByTask(taskId: string): Promise<RunnerSessionRecord[]> {
+    return [...this.#sessions.values()].filter((session) => session.taskId === taskId);
   }
 }
 
@@ -72,6 +90,7 @@ describe("CodexRunnerService with real components", () => {
 
     const service = new CodexRunnerService({
       store: new FileRunnerStore(join(storeDir, "runner-store.json")),
+      sessionStore: new InMemorySessionStore(),
       worktreeManager: new GitWorktreeManager(),
       processPool: new FakeProcessPool(1),
       logStreamer: new InMemoryLogStreamer(),

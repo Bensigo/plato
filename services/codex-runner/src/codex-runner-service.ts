@@ -4,15 +4,19 @@ import type {
   LogStreamer,
   ProcessPool,
   RunnerStore,
+  RunnerSessionRecord,
   RunnerTaskRecord,
+  SessionStore,
   StartTaskInput,
   WorktreeAllocation,
   WorktreeManager,
 } from "./contracts.js";
 import { WorktreeProvisioningError } from "./contracts.js";
+import { ProcessBackedAgentSessionFactory } from "./session/process-backed-agent-session.js";
 
 export interface CodexRunnerServiceDeps {
   store: RunnerStore;
+  sessionStore: SessionStore;
   worktreeManager: WorktreeManager;
   processPool: ProcessPool;
   logStreamer: LogStreamer;
@@ -22,6 +26,7 @@ export interface CodexRunnerServiceDeps {
 
 export class CodexRunnerService {
   readonly #store: RunnerStore;
+  readonly #sessionStore: SessionStore;
   readonly #worktreeManager: WorktreeManager;
   readonly #processPool: ProcessPool;
   readonly #logStreamer: LogStreamer;
@@ -30,6 +35,7 @@ export class CodexRunnerService {
 
   constructor(deps: CodexRunnerServiceDeps) {
     this.#store = deps.store;
+    this.#sessionStore = deps.sessionStore;
     this.#worktreeManager = deps.worktreeManager;
     this.#processPool = deps.processPool;
     this.#logStreamer = deps.logStreamer;
@@ -55,10 +61,6 @@ export class CodexRunnerService {
 
   async interruptTask(taskId: string): Promise<void> {
     const task = await this.#requireTask(taskId);
-    if (task.activeSessionId) {
-      await this.#processPool.interrupt(task.activeSessionId);
-    }
-
     const interruptedTask: RunnerTaskRecord = {
       ...task,
       state: "interrupted",
@@ -66,11 +68,22 @@ export class CodexRunnerService {
     };
 
     await this.#store.saveTask(interruptedTask);
+    if (task.activeSessionId) {
+      await this.#sessionStore.saveSession({
+        sessionId: task.activeSessionId,
+        taskId: task.taskId,
+        worktreePath: task.worktreePath ?? "",
+        state: "interrupted",
+      });
+    }
     await this.#logStreamer.append({
       taskId,
       type: "task.interrupted",
       worktreePath: interruptedTask.worktreePath,
     });
+    if (task.activeSessionId) {
+      await this.#processPool.interrupt(task.activeSessionId);
+    }
     await this.#scheduleQueuedTasks();
   }
 
@@ -100,22 +113,7 @@ export class CodexRunnerService {
       branchName: `plato/task-${task.taskId}`,
       worktreePath: task.worktreePath,
     };
-    const session = await this.#processPool.spawn(task, allocation);
-    const runningTask: RunnerTaskRecord = {
-      ...task,
-      state: "running",
-      activeSessionId: session.sessionId,
-    };
-
-    await this.#store.saveTask(runningTask);
-    await this.#logStreamer.append({
-      taskId,
-      type: "task.resumed",
-      sessionId: session.sessionId,
-      worktreePath: allocation.worktreePath,
-    });
-
-    return runningTask;
+    return this.#startManagedTask(task, allocation, "task.resumed");
   }
 
   async getTask(taskId: string): Promise<RunnerTaskRecord | undefined> {
@@ -196,23 +194,92 @@ export class CodexRunnerService {
       return;
     }
 
-    const session = this.#agentSessionFactory
-      ? await this.#agentSessionFactory.create(this.#logStreamer).start(nextTask, allocation)
-      : await this.#processPool.spawn(nextTask, allocation);
+    await this.#startManagedTask(nextTask, allocation, "task.started");
+  }
+
+  async #startManagedTask(
+    task: RunnerTaskRecord,
+    allocation: WorktreeAllocation,
+    eventType: "task.started" | "task.resumed",
+  ): Promise<RunnerTaskRecord> {
+    const sessionFactory = this.#agentSessionFactory ?? new ProcessBackedAgentSessionFactory(this.#processPool);
+    const session = await sessionFactory.create(this.#logStreamer).start(task, allocation, {
+      onExit: async (exitCode) => {
+        await this.#handleSessionExit(task.taskId, session.sessionId, allocation.worktreePath, exitCode);
+      },
+    });
     const runningTask: RunnerTaskRecord = {
-      ...nextTask,
+      ...task,
       state: "running",
       worktreePath: allocation.worktreePath,
       activeSessionId: session.sessionId,
     };
 
     await this.#store.saveTask(runningTask);
+    await this.#sessionStore.saveSession({
+      sessionId: session.sessionId,
+      taskId: task.taskId,
+      worktreePath: allocation.worktreePath,
+      pid: session.pid,
+      state: "running",
+    });
     await this.#logStreamer.append({
-      taskId: nextTask.taskId,
-      type: "task.started",
+      taskId: task.taskId,
+      type: eventType,
       sessionId: session.sessionId,
       worktreePath: allocation.worktreePath,
     });
+
+    return runningTask;
+  }
+
+  async #handleSessionExit(
+    taskId: string,
+    sessionId: string,
+    worktreePath: string,
+    exitCode: number | null,
+  ): Promise<void> {
+    const task = await this.#store.getTask(taskId);
+    if (!task || task.activeSessionId !== sessionId) {
+      return;
+    }
+
+    const completed = exitCode === 0;
+    const nextTask: RunnerTaskRecord = {
+      ...task,
+      state: completed ? "completed" : "failed",
+      activeSessionId: undefined,
+    };
+    const sessionRecord: RunnerSessionRecord = {
+      sessionId,
+      taskId,
+      worktreePath,
+      state: completed ? "completed" : "failed",
+      exitCode,
+    };
+
+    await this.#store.saveTask(nextTask);
+    await this.#sessionStore.saveSession(sessionRecord);
+    await this.#logStreamer.append(
+      completed
+        ? {
+            taskId,
+            type: "task.completed",
+            sessionId,
+            worktreePath,
+            exitCode,
+          }
+        : {
+            taskId,
+            type: "task.failed",
+            sessionId,
+            worktreePath,
+            exitCode,
+            errorCode: "TASK_EXIT_NON_ZERO",
+            message: `Task exited with code ${exitCode}`,
+          },
+    );
+    await this.#scheduleQueuedTasks();
   }
 
   async #requireTask(taskId: string): Promise<RunnerTaskRecord> {

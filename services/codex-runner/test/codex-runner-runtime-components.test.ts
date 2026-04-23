@@ -8,6 +8,7 @@ import { LocalProcessPool } from "../src/process/local-process-pool.js";
 import { createCodexAppServerCommand } from "../src/session/codex-app-server-command.js";
 import { ProcessBackedAgentSessionFactory } from "../src/session/process-backed-agent-session.js";
 import { FileRunnerStore } from "../src/store/file-runner-store.js";
+import { FileSessionStore } from "../src/store/file-session-store.js";
 import { GitWorktreeManager } from "../src/worktree/git-worktree-manager.js";
 import { cleanupDir, createGitRepo, createTempDir } from "./helpers/git.js";
 
@@ -36,6 +37,7 @@ describe("CodexRunnerService with runtime components", () => {
     const logStreamer = new FileLogStreamer(join(storeDir, "runner-events.json"));
     const service = new CodexRunnerService({
       store: new FileRunnerStore(join(storeDir, "runner-store.json")),
+      sessionStore: new FileSessionStore(join(storeDir, "runner-sessions.json")),
       worktreeManager: new GitWorktreeManager(),
       processPool,
       logStreamer,
@@ -52,7 +54,7 @@ describe("CodexRunnerService with runtime components", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     await expect(service.listEvents("task-1")).resolves.toSatisfy((events) => {
-      expect(events.length).toBeGreaterThanOrEqual(5);
+      expect(events.length).toBeGreaterThanOrEqual(6);
       expect(events[0]).toEqual({ taskId: "task-1", type: "task.queued" });
       expect(events[1]).toMatchObject({
         taskId: "task-1",
@@ -72,6 +74,7 @@ describe("CodexRunnerService with runtime components", () => {
         events.some((event: SessionEvent) => event.type === "session.output" && event.stream === "stderr"),
       ).toBe(true);
       expect(events.some((event: SessionEvent) => event.type === "session.exited")).toBe(true);
+      expect(events.some((event: SessionEvent) => event.type === "task.completed")).toBe(true);
       return true;
     });
   });
