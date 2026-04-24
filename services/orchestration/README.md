@@ -13,6 +13,8 @@ work to Codex today and other agents later without changing upstream callers.
 - `@plato/codex-runner` is the first adapter behind this boundary.
 - MCP and other caller-facing surfaces should depend on this package, not on a
   concrete runner implementation.
+- `OrchestrationProductSurface` defines stable `plato.*` operation descriptors
+  and JSON-friendly envelopes that CLI/MCP adapters can expose.
 
 ## Development Notes
 

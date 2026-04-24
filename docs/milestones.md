@@ -82,6 +82,13 @@ What this unlocks:
 
 Hermes, OpenClaw, or other personal agents can call Plato as a reusable local orchestration tool instead of embedding orchestration logic directly.
 
+Current M24 scope:
+
+- protocol-neutral `plato.*` operation descriptors over `@plato/orchestration`
+- JSON-friendly command response envelopes for tasks, graphs, events, controls, and graph results
+- `@plato/cli` as the first CLI/MCP-facing app package
+- MCP tool/resource registration for the neutral product surface
+
 ## Milestone 5a: Agent-Agnostic Orchestration Boundary
 
 Goal: keep Plato's product-facing orchestration model independent from any one agent backend.
@@ -115,6 +122,6 @@ Faster and better task completion with more predictable behavior and fewer waste
 
 ## Immediate Next Step
 
-The next implementation milestone should be Milestone 5a: Agent-Agnostic Orchestration Boundary.
+The next implementation milestone should extend Milestone 5: MCP and CLI Product Surface.
 
-That is the smallest meaningful product step after the merged graph, worker, synthesis, and auth work because MCP should depend on Plato-level orchestration contracts rather than the Codex-specific runner package.
+The agent-agnostic boundary is now in place. The next smallest useful step is wiring the product surface to a real runtime bootstrap while preserving the rule that MCP and CLI handlers speak Plato orchestration contracts instead of Codex-specific runner internals.
