@@ -265,8 +265,24 @@ export class TaskOrchestrationService {
     return runtime.getTaskGraphResults?.(taskId) ?? Promise.resolve(undefined);
   }
 
-  listTasks(selector?: AgentRuntimeSelector): Promise<OrchestrationTaskRecord[]> {
-    return this.#runtimeFor(selector).listTasks();
+  async listTasks(selector?: AgentRuntimeSelector): Promise<OrchestrationTaskRecord[]> {
+    if (selector) {
+      const tasks = await this.#runtimeFor(selector).listTasks();
+      for (const task of tasks) {
+        this.#rememberTaskRuntime(task);
+      }
+      return tasks;
+    }
+
+    const allTasks: OrchestrationTaskRecord[] = [];
+    for (const runtime of this.#runtimes.values()) {
+      const tasks = await runtime.listTasks();
+      for (const task of tasks) {
+        this.#rememberTaskRuntime(task);
+        allTasks.push(task);
+      }
+    }
+    return allTasks;
   }
 
   async listEvents(taskId: string, selector?: AgentRuntimeSelector): Promise<OrchestrationEvent[]> {
@@ -372,3 +388,5 @@ export class TaskOrchestrationService {
     }
   }
 }
+
+export * from "./surface.js";

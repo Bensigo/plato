@@ -87,6 +87,66 @@ describe("TaskOrchestrationService", () => {
     expect(codex.resumedTaskIds).toEqual([]);
   });
 
+  it("lists tasks across all registered runtimes when no selector is provided", async () => {
+    const codex = new FakeAgentRuntime("codex-local", "codex");
+    const hermes = new FakeAgentRuntime("hermes-local", "hermes");
+    codex.tasks.set(
+      "codex-task",
+      codex.buildTask({
+        taskId: "codex-task",
+        workspacePath: "/repo",
+        prompt: "Codex work",
+      }),
+    );
+    hermes.tasks.set(
+      "hermes-task",
+      hermes.buildTask({
+        taskId: "hermes-task",
+        workspacePath: "/repo",
+        prompt: "Hermes work",
+      }),
+    );
+    const orchestration = new TaskOrchestrationService({
+      defaultRuntimeId: codex.runtimeId,
+      runtimes: [codex, hermes],
+    });
+
+    await expect(orchestration.listTasks()).resolves.toMatchObject([
+      { taskId: "codex-task", execution: { runtimeId: "codex-local" } },
+      { taskId: "hermes-task", execution: { runtimeId: "hermes-local" } },
+    ]);
+  });
+
+  it("preserves same task ids from different runtimes in aggregated task lists", async () => {
+    const codex = new FakeAgentRuntime("codex-local", "codex");
+    const hermes = new FakeAgentRuntime("hermes-local", "hermes");
+    codex.tasks.set(
+      "shared-task",
+      codex.buildTask({
+        taskId: "shared-task",
+        workspacePath: "/repo",
+        prompt: "Codex work",
+      }),
+    );
+    hermes.tasks.set(
+      "shared-task",
+      hermes.buildTask({
+        taskId: "shared-task",
+        workspacePath: "/repo",
+        prompt: "Hermes work",
+      }),
+    );
+    const orchestration = new TaskOrchestrationService({
+      defaultRuntimeId: codex.runtimeId,
+      runtimes: [codex, hermes],
+    });
+
+    await expect(orchestration.listTasks()).resolves.toMatchObject([
+      { taskId: "shared-task", execution: { runtimeId: "codex-local" } },
+      { taskId: "shared-task", execution: { runtimeId: "hermes-local" } },
+    ]);
+  });
+
   it("uses the default runtime when no agent selector is provided", async () => {
     const runtime = new FakeAgentRuntime("default-agent", "test-agent");
     const orchestration = new TaskOrchestrationService({
@@ -200,7 +260,7 @@ class FakeAgentRuntime implements AgentRuntime {
   }
 
   async listTasks(): Promise<OrchestrationTaskRecord[]> {
-    return [];
+    return [...this.tasks.values()];
   }
 
   async listEvents(taskId: string): Promise<OrchestrationEvent[]> {

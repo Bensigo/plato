@@ -9,7 +9,8 @@ The repo is split into user-facing applications in `apps/` and backend or infras
 ```text
 .
 ├── apps/
-│   └── desktop/          # User-facing desktop entrypoint
+│   ├── desktop/          # User-facing desktop entrypoint
+│   └── plato-cli/        # CLI and MCP orchestration surface
 ├── services/
 │   ├── codex-runner/     # Codex task execution and orchestration
 │   ├── config/           # Local Plato configuration and auth status
@@ -32,6 +33,7 @@ The repo is split into user-facing applications in `apps/` and backend or infras
 ## Workspace Snapshot
 
 - `apps/desktop` is the current desktop application entrypoint.
+- `apps/plato-cli` owns the agent-facing CLI and MCP product surface.
 - `services/orchestration` owns the agent-agnostic task, graph, event, and runtime contracts.
 - `services/codex-runner` is the current Codex execution backend behind those contracts.
 - `services/config` owns local Plato configuration and Codex auth status.
@@ -68,6 +70,7 @@ Those ideas are currently split between `services/orchestration`, which defines 
 Today, Plato most concretely provides the execution backbone and first agent-agnostic boundary for that future system:
 
 - neutral orchestration contracts for tasks, graphs, events, and agent runtimes
+- initial CLI and MCP tool/resource surface over those orchestration contracts
 - queueing and lifecycle management for Codex-backed tasks
 - isolated git worktrees per task
 - runtime readiness checks and bootstrap
@@ -75,7 +78,7 @@ Today, Plato most concretely provides the execution backbone and first agent-agn
 - durable task/session state
 - structured event capture for inspection and recovery
 
-That means the repo already has the beginnings of a trustworthy execution layer and a clean place for future agent adapters, but it does not yet expose the full MCP product surface.
+That means the repo already has the beginnings of a trustworthy execution layer, a clean place for future agent adapters, and the first caller-facing surface for MCP/CLI integrations.
 
 ## Getting Started
 
