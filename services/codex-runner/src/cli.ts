@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
+import { createFileBackedPlatoConfigService } from "@plato/config";
+import type { CodexOptions } from "@openai/codex-sdk";
 import type {
   CreateTaskGraphInput,
   ParentTaskSynthesisRecord,
@@ -17,6 +19,7 @@ import type {
 import { CodexRunnerService } from "./codex-runner-service.js";
 import { FileLogStreamer } from "./logs/file-log-streamer.js";
 import { DefaultCodexRuntimeManager } from "./runtime/codex-runtime-manager.js";
+import { CodexSdkBackedAgentSessionFactory } from "./session/codex-sdk-backed-agent-session.js";
 import { openCodexRunnerPersistence } from "./store/sqlite-runner-persistence.js";
 import { GitWorktreeManager } from "./worktree/git-worktree-manager.js";
 
@@ -52,6 +55,8 @@ export interface OperatorRuntime {
 export interface OperatorRuntimeOptions {
   dbPath?: string;
   logPath?: string;
+  configPath?: string;
+  secretsPath?: string;
   cwd?: string;
   maxConcurrentTasks?: number;
 }
@@ -92,6 +97,8 @@ export async function runCodexRunnerCli(
         return await handleInterrupt(rest, { cwd, stdout, openRuntime });
       case "resume":
         return await handleResume(rest, { cwd, stdout, openRuntime });
+      case "config":
+        return await handleConfig(rest, { cwd, stdout });
       default:
         stderr.write(`Unknown command: ${command}\n\n${buildHelpText()}\n`);
         return 1;
@@ -100,6 +107,69 @@ export async function runCodexRunnerCli(
     stderr.write(`${formatCliError(error)}\n`);
     return 1;
   }
+}
+
+async function handleConfig(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout">,
+): Promise<number> {
+  const [subcommand, ...rest] = argv;
+  switch (subcommand) {
+    case "status":
+      return handleConfigStatus(rest, options);
+    case "set-openai-key":
+      return handleConfigSetOpenAIKey(rest, options);
+    case "clear-openai-key":
+      return handleConfigClearOpenAIKey(rest, options);
+    case "auth-chatgpt":
+      throw new Error("ChatGPT OAuth is not implemented yet; use config set-openai-key for Milestone 21");
+    default:
+      throw new Error("config requires a subcommand: status, set-openai-key, clear-openai-key, or auth-chatgpt");
+  }
+}
+
+async function handleConfigStatus(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout">,
+): Promise<number> {
+  const service = openConfigService(argv, options.cwd);
+  writeJson(options.stdout ?? process.stdout, await service.getStatus());
+  return 0;
+}
+
+async function handleConfigSetOpenAIKey(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout">,
+): Promise<number> {
+  const parsed = parseArgs({
+    args: argv,
+    allowPositionals: false,
+    options: {
+      "api-key": { type: "string" },
+      "config-path": { type: "string" },
+      "secrets-path": { type: "string" },
+    },
+  });
+  const apiKey = parsed.values["api-key"]?.trim();
+  if (!apiKey) {
+    throw new Error("config set-openai-key requires --api-key");
+  }
+
+  const service = createFileBackedPlatoConfigService({
+    configPath: resolveOptionalPath(options.cwd, parsed.values["config-path"]),
+    secretsPath: resolveOptionalPath(options.cwd, parsed.values["secrets-path"]),
+  });
+  writeJson(options.stdout ?? process.stdout, await service.setOpenAIApiKey(apiKey));
+  return 0;
+}
+
+async function handleConfigClearOpenAIKey(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout">,
+): Promise<number> {
+  const service = openConfigService(argv, options.cwd);
+  writeJson(options.stdout ?? process.stdout, await service.clearCodexAuth());
+  return 0;
 }
 
 async function handleGraph(
@@ -285,6 +355,9 @@ export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}):
     sessionStore: persistence.sessionStore,
     worktreeManager: new GitWorktreeManager(),
     logStreamer: new FileLogStreamer(storagePaths.logPath),
+    agentSessionFactory: new CodexSdkBackedAgentSessionFactory({
+      codexOptions: await resolveCodexOptionsFromConfig(options),
+    }),
     runtimeManager: new DefaultCodexRuntimeManager(),
     maxConcurrentTasks: options.maxConcurrentTasks,
   });
@@ -295,6 +368,22 @@ export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}):
       persistence.close();
     },
   };
+}
+
+export async function resolveCodexOptionsFromConfig(
+  options: Pick<OperatorRuntimeOptions, "configPath" | "secretsPath" | "cwd"> = {},
+): Promise<CodexOptions | undefined> {
+  const auth = await createFileBackedPlatoConfigService({
+    configPath: resolveOptionalPath(options.cwd, options.configPath),
+    secretsPath: resolveOptionalPath(options.cwd, options.secretsPath),
+  }).resolveCodexAuth();
+  if (auth?.provider !== "openai_api_key" || !auth.openAIApiKey) {
+    return undefined;
+  }
+
+  return {
+    apiKey: auth.openAIApiKey,
+  } as CodexOptions;
 }
 
 async function handleStart(
@@ -512,6 +601,26 @@ function resolveStoragePaths(cwd: string, dbPath?: string, logPath?: string): { 
   };
 }
 
+function openConfigService(argv: string[], cwd: string | undefined) {
+  const parsed = parseArgs({
+    args: argv,
+    allowPositionals: false,
+    options: {
+      "config-path": { type: "string" },
+      "secrets-path": { type: "string" },
+    },
+  });
+
+  return createFileBackedPlatoConfigService({
+    configPath: resolveOptionalPath(cwd, parsed.values["config-path"]),
+    secretsPath: resolveOptionalPath(cwd, parsed.values["secrets-path"]),
+  });
+}
+
+function resolveOptionalPath(cwd: string | undefined, path: string | undefined): string | undefined {
+  return path ? resolve(cwd ?? process.cwd(), path) : undefined;
+}
+
 function parseOptionalInteger(raw: string | undefined, fieldName: string): number | undefined {
   if (raw === undefined) {
     return undefined;
@@ -645,10 +754,16 @@ function buildHelpText(): string {
     "  events <taskId>",
     "  interrupt <taskId>",
     "  resume <taskId>",
+    "  config status",
+    "  config set-openai-key --api-key <key>",
+    "  config clear-openai-key",
+    "  config auth-chatgpt",
     "",
     "Storage:",
     "  --db-path <path>   Defaults to .plato/codex-runner/runner.sqlite",
     "  --log-path <path>  Defaults to the events.json file next to the database",
+    "  --config-path <path>   Defaults to ~/.plato/config.json for config commands",
+    "  --secrets-path <path>  Defaults to ~/.plato/secrets.json for config commands",
   ].join("\n");
 }
 

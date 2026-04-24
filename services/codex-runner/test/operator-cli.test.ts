@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -7,7 +10,7 @@ import type {
   SessionEvent,
 } from "../src/contracts.js";
 import type { OperatorRuntime, OperatorRuntimeOptions, RunnerOperatorClient } from "../src/cli.js";
-import { runCodexRunnerCli } from "../src/cli.js";
+import { resolveCodexOptionsFromConfig, runCodexRunnerCli } from "../src/cli.js";
 
 class BufferWriter {
   value = "";
@@ -29,6 +32,10 @@ function buildRuntime(
       close,
     };
   };
+}
+
+async function createTempDir(prefix: string): Promise<string> {
+  return mkdtemp(join(tmpdir(), prefix));
 }
 
 describe("runCodexRunnerCli", () => {
@@ -1023,5 +1030,87 @@ describe("runCodexRunnerCli", () => {
     expect(closed).toBe(true);
     expect(stderr.value).toBe("");
     expect(JSON.parse(stdout.value)).toEqual(snapshot);
+  });
+
+  it("configures and clears an OpenAI API key for Codex auth", async () => {
+    const tempDir = await createTempDir("codex-runner-config-");
+    try {
+      const configPath = `${tempDir}/config.json`;
+      const secretsPath = `${tempDir}/secrets.json`;
+      const stdout = new BufferWriter();
+      const stderr = new BufferWriter();
+
+      const setExitCode = await runCodexRunnerCli(
+        [
+          "config",
+          "set-openai-key",
+          "--api-key",
+          "sk-test-abcdef",
+          "--config-path",
+          configPath,
+          "--secrets-path",
+          secretsPath,
+        ],
+        { stdout, stderr },
+      );
+
+      expect(setExitCode).toBe(0);
+      expect(stderr.value).toBe("");
+      expect(JSON.parse(stdout.value)).toEqual({
+        configPath,
+        codexAuth: {
+          configured: true,
+          provider: "openai_api_key",
+          openAIApiKey: {
+            secretRef: "codex.openai_api_key",
+            last4: "cdef",
+          },
+        },
+      });
+      await expect(readFile(configPath, "utf8")).resolves.not.toContain("sk-test");
+      await expect(resolveCodexOptionsFromConfig({ configPath, secretsPath })).resolves.toMatchObject({
+        apiKey: "sk-test-abcdef",
+      });
+
+      const clearStdout = new BufferWriter();
+      const clearExitCode = await runCodexRunnerCli(
+        [
+          "config",
+          "clear-openai-key",
+          "--config-path",
+          configPath,
+          "--secrets-path",
+          secretsPath,
+        ],
+        { stdout: clearStdout, stderr },
+      );
+
+      expect(clearExitCode).toBe(0);
+      expect(JSON.parse(clearStdout.value)).toEqual({
+        configPath,
+        codexAuth: {
+          configured: false,
+        },
+      });
+      await expect(resolveCodexOptionsFromConfig({ configPath, secretsPath })).resolves.toBeUndefined();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports ChatGPT OAuth as an explicit future auth path", async () => {
+    const stdout = new BufferWriter();
+    const stderr = new BufferWriter();
+
+    const exitCode = await runCodexRunnerCli(["config", "auth-chatgpt"], {
+      stdout,
+      stderr,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout.value).toBe("");
+    expect(stderr.value).toBe(
+      "ChatGPT OAuth is not implemented yet; use config set-openai-key for Milestone 21\n",
+    );
   });
 });
