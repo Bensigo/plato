@@ -1204,15 +1204,9 @@ describe("CodexRunnerService", () => {
       },
       {
         taskId: "task-parent",
-        type: "task.completed",
-        sessionId: "session-3",
-        worktreePath: "/repo/.plato/worktrees/task-parent",
-        exitCode: 0,
-      },
-      {
-        taskId: "task-parent",
         type: "task.failed",
-        worktreePath: "/repo/.plato/worktrees/task-parent",
+        sessionId: undefined,
+        worktreePath: undefined,
         errorCode: "TASK_GRAPH_CHILD_FAILED",
         message: "Graph failed because child task task-child-b failed",
       },
@@ -1285,11 +1279,6 @@ describe("CodexRunnerService", () => {
 
     await agentSession.exit("session-1", 0);
     await agentSession.exit("session-2", 0);
-    await expect(service.getTaskGraph("task-parent")).resolves.toMatchObject({
-      state: "running",
-    });
-
-    await agentSession.exit("session-3", 0);
 
     await expect(service.getTaskGraph("task-parent")).resolves.toMatchObject({
       state: "completed",
@@ -1730,8 +1719,8 @@ describe("CodexRunnerService", () => {
     expect(parentEvents).toContainEqual({
       taskId: "task-parent",
       type: "task.failed",
-      sessionId: "session-1",
-      worktreePath: "/repo/.plato/worktrees/task-parent",
+      sessionId: undefined,
+      worktreePath: undefined,
       errorCode: "TASK_GRAPH_CHILD_FAILED",
       message: "Graph failed because child task task-dependent failed",
     });

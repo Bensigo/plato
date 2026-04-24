@@ -479,6 +479,9 @@ describe("runCodexRunnerCli", () => {
       async getTaskGraph() {
         return undefined;
       },
+      async getTaskGraphResults() {
+        return undefined;
+      },
       async getTaskStatus() {
         return undefined;
       },
@@ -565,6 +568,9 @@ describe("runCodexRunnerCli", () => {
         return undefined;
       },
       async getTaskGraph() {
+        return undefined;
+      },
+      async getTaskGraphResults() {
         return undefined;
       },
       async getTaskStatus() {
