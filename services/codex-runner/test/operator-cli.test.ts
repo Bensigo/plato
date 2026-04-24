@@ -1,3 +1,7 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -7,7 +11,7 @@ import type {
   SessionEvent,
 } from "../src/contracts.js";
 import type { OperatorRuntime, OperatorRuntimeOptions, RunnerOperatorClient } from "../src/cli.js";
-import { runCodexRunnerCli } from "../src/cli.js";
+import { resolveCodexOptionsFromConfig, runCodexRunnerCli } from "../src/cli.js";
 
 class BufferWriter {
   value = "";
@@ -29,6 +33,10 @@ function buildRuntime(
       close,
     };
   };
+}
+
+async function createTempDir(prefix: string): Promise<string> {
+  return mkdtemp(join(tmpdir(), prefix));
 }
 
 describe("runCodexRunnerCli", () => {
@@ -95,6 +103,10 @@ describe("runCodexRunnerCli", () => {
         "4",
         "--max-concurrent-tasks",
         "5",
+        "--config-path",
+        "/tmp/plato-config.json",
+        "--secrets-path",
+        "/tmp/plato-secrets.json",
       ],
       {
         cwd: "/workspace",
@@ -119,6 +131,8 @@ describe("runCodexRunnerCli", () => {
         cwd: "/workspace",
         dbPath: undefined,
         logPath: undefined,
+        configPath: "/tmp/plato-config.json",
+        secretsPath: "/tmp/plato-secrets.json",
         maxConcurrentTasks: 5,
       },
     ]);
@@ -397,6 +411,10 @@ describe("runCodexRunnerCli", () => {
         "Coordinate",
         "--max-concurrent-tasks",
         "7",
+        "--config-path",
+        "/tmp/plato-graph-config.json",
+        "--secrets-path",
+        "/tmp/plato-graph-secrets.json",
         "--child",
         "task-child:Build API:3",
         "--child",
@@ -444,6 +462,8 @@ describe("runCodexRunnerCli", () => {
         cwd: expect.any(String),
         dbPath: undefined,
         logPath: undefined,
+        configPath: "/tmp/plato-graph-config.json",
+        secretsPath: "/tmp/plato-graph-secrets.json",
         maxConcurrentTasks: 7,
       },
     ]);
@@ -1023,5 +1043,143 @@ describe("runCodexRunnerCli", () => {
     expect(closed).toBe(true);
     expect(stderr.value).toBe("");
     expect(JSON.parse(stdout.value)).toEqual(snapshot);
+  });
+
+  it("configures and clears an OpenAI API key for Codex auth from stdin", async () => {
+    const tempDir = await createTempDir("codex-runner-config-");
+    try {
+      const configPath = `${tempDir}/config.json`;
+      const secretsPath = `${tempDir}/secrets.json`;
+      const stdout = new BufferWriter();
+      const stderr = new BufferWriter();
+
+      const setExitCode = await runCodexRunnerCli(
+        [
+          "config",
+          "set-openai-key",
+          "--api-key-stdin",
+          "--config-path",
+          configPath,
+          "--secrets-path",
+          secretsPath,
+        ],
+        { stdout, stderr, stdin: Readable.from(["sk-test-abcdef\n"]) },
+      );
+
+      expect(setExitCode).toBe(0);
+      expect(stderr.value).toBe("");
+      expect(JSON.parse(stdout.value)).toEqual({
+        configPath,
+        codexAuth: {
+          configured: true,
+          provider: "openai_api_key",
+          openAIApiKey: {
+            secretRef: "codex.openai_api_key",
+            last4: "cdef",
+          },
+        },
+      });
+      await expect(readFile(configPath, "utf8")).resolves.not.toContain("sk-test");
+      await expect(resolveCodexOptionsFromConfig({ configPath, secretsPath })).resolves.toMatchObject({
+        apiKey: "sk-test-abcdef",
+      });
+
+      const clearStdout = new BufferWriter();
+      const clearExitCode = await runCodexRunnerCli(
+        [
+          "config",
+          "clear-openai-key",
+          "--config-path",
+          configPath,
+          "--secrets-path",
+          secretsPath,
+        ],
+        { stdout: clearStdout, stderr },
+      );
+
+      expect(clearExitCode).toBe(0);
+      expect(JSON.parse(clearStdout.value)).toEqual({
+        configPath,
+        codexAuth: {
+          configured: false,
+        },
+      });
+      await expect(resolveCodexOptionsFromConfig({ configPath, secretsPath })).resolves.toBeUndefined();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("runs ChatGPT OAuth through Codex app-server and stores account metadata", async () => {
+    const tempDir = await createTempDir("plato-runner-");
+    const configPath = `${tempDir}/config.json`;
+    const secretsPath = `${tempDir}/secrets.json`;
+    const stdout = new BufferWriter();
+    const stderr = new BufferWriter();
+
+    try {
+      const exitCode = await runCodexRunnerCli(
+        [
+          "config",
+          "auth-chatgpt",
+          "--device-code",
+          "--config-path",
+          configPath,
+          "--secrets-path",
+          secretsPath,
+        ],
+        {
+          stdout,
+          stderr,
+          openCodexAuthClient: () => ({
+            async startChatGptOAuthLogin(options) {
+              options.onLoginStarted?.({
+                type: "device_code",
+                loginId: "login-1",
+                verificationUrl: "https://auth.openai.com/codex/device",
+                userCode: "ABCD-1234",
+              });
+              return {
+                account: {
+                  authMode: "chatgpt",
+                  email: "user@example.com",
+                  planType: "plus",
+                },
+              };
+            },
+            close() {},
+          }),
+        },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(stderr.value).toBe("");
+      const lines = JSON.parse(`[${stdout.value.trim().replaceAll("\n}\n{", "\n},\n{")}]`);
+      expect(lines[0]).toEqual({
+        event: "chatgpt_login_started",
+        login: {
+          type: "device_code",
+          loginId: "login-1",
+          verificationUrl: "https://auth.openai.com/codex/device",
+          userCode: "ABCD-1234",
+        },
+      });
+      expect(lines[1]).toMatchObject({
+        configPath,
+        codexAuth: {
+          configured: true,
+          provider: "chatgpt_oauth",
+          chatGptOAuth: {
+            accountId: "user@example.com",
+            email: "user@example.com",
+            planType: "plus",
+            tokenSource: "codex_app_server",
+          },
+        },
+      });
+      await expect(resolveCodexOptionsFromConfig({ configPath, secretsPath })).resolves.toBeUndefined();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });

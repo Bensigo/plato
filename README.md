@@ -31,6 +31,7 @@ The repo is split into user-facing applications in `apps/` and backend or infras
 
 - `apps/desktop` is the current desktop application entrypoint.
 - `services/codex-runner` is the current execution and orchestration service for Codex-powered work.
+- `services/config` owns local Plato configuration and Codex auth status.
 - `services/db` is reserved for database-related code, migrations, and clients.
 - `services/github-server` is reserved for GitHub-facing integrations.
 

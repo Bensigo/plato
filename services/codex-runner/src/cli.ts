@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
+import { createFileBackedPlatoConfigService } from "@plato/config";
+import type { CodexOptions } from "@openai/codex-sdk";
 import type {
   CreateTaskGraphInput,
   ParentTaskSynthesisRecord,
@@ -15,8 +17,13 @@ import type {
   SessionEvent,
 } from "./contracts.js";
 import { CodexRunnerService } from "./codex-runner-service.js";
+import {
+  CodexAppServerAuthClient,
+  type ChatGptLoginStarted,
+} from "./auth/codex-app-server-auth-client.js";
 import { FileLogStreamer } from "./logs/file-log-streamer.js";
 import { DefaultCodexRuntimeManager } from "./runtime/codex-runtime-manager.js";
+import { CodexSdkBackedAgentSessionFactory } from "./session/codex-sdk-backed-agent-session.js";
 import { openCodexRunnerPersistence } from "./store/sqlite-runner-persistence.js";
 import { GitWorktreeManager } from "./worktree/git-worktree-manager.js";
 
@@ -52,15 +59,38 @@ export interface OperatorRuntime {
 export interface OperatorRuntimeOptions {
   dbPath?: string;
   logPath?: string;
+  configPath?: string;
+  secretsPath?: string;
   cwd?: string;
   maxConcurrentTasks?: number;
 }
 
 export interface RunCodexRunnerCliOptions {
   cwd?: string;
+  stdin?: AsyncIterable<string | Buffer>;
   stdout?: Writer;
   stderr?: Writer;
   openRuntime?: (options: OperatorRuntimeOptions) => Promise<OperatorRuntime> | OperatorRuntime;
+  openCodexAuthClient?: (options: CodexAuthClientOptions) => CodexAuthClient;
+}
+
+export interface CodexAuthClientOptions {
+  codexPath?: string;
+}
+
+export interface CodexAuthClient {
+  startChatGptOAuthLogin(options: {
+    mode?: "browser" | "device_code";
+    timeoutMs?: number;
+    onLoginStarted?: (started: ChatGptLoginStarted) => void;
+  }): Promise<{
+    account: {
+      authMode: "apikey" | "chatgpt" | null;
+      email?: string;
+      planType?: string;
+    };
+  }>;
+  close(): void;
 }
 
 export async function runCodexRunnerCli(
@@ -92,6 +122,15 @@ export async function runCodexRunnerCli(
         return await handleInterrupt(rest, { cwd, stdout, openRuntime });
       case "resume":
         return await handleResume(rest, { cwd, stdout, openRuntime });
+      case "config":
+        return await handleConfig(rest, {
+          cwd,
+          stdin: options.stdin,
+          stdout,
+          openCodexAuthClient:
+            options.openCodexAuthClient ??
+            ((authOptions) => new CodexAppServerAuthClient({ codexPath: authOptions.codexPath })),
+        });
       default:
         stderr.write(`Unknown command: ${command}\n\n${buildHelpText()}\n`);
         return 1;
@@ -100,6 +139,119 @@ export async function runCodexRunnerCli(
     stderr.write(`${formatCliError(error)}\n`);
     return 1;
   }
+}
+
+async function handleConfig(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdin" | "stdout" | "openCodexAuthClient">,
+): Promise<number> {
+  const [subcommand, ...rest] = argv;
+  switch (subcommand) {
+    case "status":
+      return handleConfigStatus(rest, options);
+    case "set-openai-key":
+      return handleConfigSetOpenAIKey(rest, options);
+    case "clear-openai-key":
+      return handleConfigClearOpenAIKey(rest, options);
+    case "auth-chatgpt":
+      return handleConfigAuthChatGpt(rest, options);
+    default:
+      throw new Error("config requires a subcommand: status, set-openai-key, clear-openai-key, or auth-chatgpt");
+  }
+}
+
+async function handleConfigAuthChatGpt(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout" | "openCodexAuthClient">,
+): Promise<number> {
+  const parsed = parseArgs({
+    args: argv,
+    allowPositionals: false,
+    options: {
+      "config-path": { type: "string" },
+      "secrets-path": { type: "string" },
+      "codex-path": { type: "string" },
+      "device-code": { type: "boolean", default: false },
+      "timeout-ms": { type: "string" },
+    },
+  });
+  const stdout = options.stdout ?? process.stdout;
+  const authClient = options.openCodexAuthClient?.({
+    codexPath: resolveOptionalPath(options.cwd, parsed.values["codex-path"]),
+  });
+  if (!authClient) {
+    throw new Error("Codex auth client was not created");
+  }
+
+  try {
+    const result = await authClient.startChatGptOAuthLogin({
+      mode: parsed.values["device-code"] ? "device_code" : "browser",
+      timeoutMs: parseOptionalInteger(parsed.values["timeout-ms"], "timeout-ms"),
+      onLoginStarted: (started) => {
+        writeJson(stdout, {
+          event: "chatgpt_login_started",
+          login: started,
+        });
+      },
+    });
+    const service = createFileBackedPlatoConfigService({
+      configPath: resolveOptionalPath(options.cwd, parsed.values["config-path"]),
+      secretsPath: resolveOptionalPath(options.cwd, parsed.values["secrets-path"]),
+    });
+    writeJson(
+      stdout,
+      await service.setChatGptOAuthAccount({
+        email: result.account.email,
+        planType: result.account.planType,
+      }),
+    );
+    return 0;
+  } finally {
+    authClient.close();
+  }
+}
+
+async function handleConfigStatus(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout">,
+): Promise<number> {
+  const service = openConfigService(argv, options.cwd);
+  writeJson(options.stdout ?? process.stdout, await service.getStatus());
+  return 0;
+}
+
+async function handleConfigSetOpenAIKey(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdin" | "stdout">,
+): Promise<number> {
+  const parsed = parseArgs({
+    args: argv,
+    allowPositionals: false,
+    options: {
+      "api-key": { type: "string" },
+      "api-key-env": { type: "string" },
+      "api-key-stdin": { type: "boolean", default: false },
+      "config-path": { type: "string" },
+      "secrets-path": { type: "string" },
+    },
+  });
+  const apiKey = await resolveOpenAIApiKeyInput(parsed.values, options.stdin ?? process.stdin);
+
+  const service = createFileBackedPlatoConfigService({
+    configPath: resolveOptionalPath(options.cwd, parsed.values["config-path"]),
+    secretsPath: resolveOptionalPath(options.cwd, parsed.values["secrets-path"]),
+  });
+  writeJson(options.stdout ?? process.stdout, await service.setOpenAIApiKey(apiKey));
+  return 0;
+}
+
+async function handleConfigClearOpenAIKey(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout">,
+): Promise<number> {
+  const service = openConfigService(argv, options.cwd);
+  writeJson(options.stdout ?? process.stdout, await service.clearCodexAuth());
+  return 0;
 }
 
 async function handleGraph(
@@ -137,6 +289,8 @@ async function handleGraphStart(
       "max-concurrent-tasks": { type: "string" },
       "db-path": { type: "string" },
       "log-path": { type: "string" },
+      "config-path": { type: "string" },
+      "secrets-path": { type: "string" },
     },
   });
   const prompt = parsed.values.prompt?.trim();
@@ -149,6 +303,8 @@ async function handleGraphStart(
     cwd: options.cwd,
     dbPath: parsed.values["db-path"],
     logPath: parsed.values["log-path"],
+    configPath: parsed.values["config-path"],
+    secretsPath: parsed.values["secrets-path"],
     maxConcurrentTasks: parseOptionalInteger(parsed.values["max-concurrent-tasks"], "max concurrent tasks"),
   });
 
@@ -285,6 +441,9 @@ export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}):
     sessionStore: persistence.sessionStore,
     worktreeManager: new GitWorktreeManager(),
     logStreamer: new FileLogStreamer(storagePaths.logPath),
+    agentSessionFactory: new CodexSdkBackedAgentSessionFactory({
+      codexOptions: await resolveCodexOptionsFromConfig(options),
+    }),
     runtimeManager: new DefaultCodexRuntimeManager(),
     maxConcurrentTasks: options.maxConcurrentTasks,
   });
@@ -295,6 +454,22 @@ export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}):
       persistence.close();
     },
   };
+}
+
+export async function resolveCodexOptionsFromConfig(
+  options: Pick<OperatorRuntimeOptions, "configPath" | "secretsPath" | "cwd"> = {},
+): Promise<CodexOptions | undefined> {
+  const auth = await createFileBackedPlatoConfigService({
+    configPath: resolveOptionalPath(options.cwd, options.configPath),
+    secretsPath: resolveOptionalPath(options.cwd, options.secretsPath),
+  }).resolveCodexAuth();
+  if (auth?.provider !== "openai_api_key" || !auth.openAIApiKey) {
+    return undefined;
+  }
+
+  return {
+    apiKey: auth.openAIApiKey,
+  } as CodexOptions;
 }
 
 async function handleStart(
@@ -312,6 +487,8 @@ async function handleStart(
       "max-concurrent-tasks": { type: "string" },
       "db-path": { type: "string" },
       "log-path": { type: "string" },
+      "config-path": { type: "string" },
+      "secrets-path": { type: "string" },
     },
   });
   const prompt = parsed.values.prompt?.trim();
@@ -323,6 +500,8 @@ async function handleStart(
     cwd: options.cwd,
     dbPath: parsed.values["db-path"],
     logPath: parsed.values["log-path"],
+    configPath: parsed.values["config-path"],
+    secretsPath: parsed.values["secrets-path"],
     maxConcurrentTasks: parseOptionalInteger(parsed.values["max-concurrent-tasks"], "max concurrent tasks"),
   });
 
@@ -512,6 +691,67 @@ function resolveStoragePaths(cwd: string, dbPath?: string, logPath?: string): { 
   };
 }
 
+function openConfigService(argv: string[], cwd: string | undefined) {
+  const parsed = parseArgs({
+    args: argv,
+    allowPositionals: false,
+    options: {
+      "config-path": { type: "string" },
+      "secrets-path": { type: "string" },
+    },
+  });
+
+  return createFileBackedPlatoConfigService({
+    configPath: resolveOptionalPath(cwd, parsed.values["config-path"]),
+    secretsPath: resolveOptionalPath(cwd, parsed.values["secrets-path"]),
+  });
+}
+
+function resolveOptionalPath(cwd: string | undefined, path: string | undefined): string | undefined {
+  return path ? resolve(cwd ?? process.cwd(), path) : undefined;
+}
+
+async function resolveOpenAIApiKeyInput(
+  values: {
+    "api-key"?: string;
+    "api-key-env"?: string;
+    "api-key-stdin"?: boolean;
+  },
+  stdin: AsyncIterable<string | Buffer>,
+): Promise<string> {
+  if (values["api-key-stdin"]) {
+    const apiKey = (await readAll(stdin)).trim();
+    if (!apiKey) {
+      throw new Error("config set-openai-key received an empty API key from stdin");
+    }
+    return apiKey;
+  }
+
+  const envName = values["api-key-env"]?.trim();
+  if (envName) {
+    const apiKey = process.env[envName]?.trim();
+    if (!apiKey) {
+      throw new Error(`Environment variable ${envName} does not contain an OpenAI API key`);
+    }
+    return apiKey;
+  }
+
+  const apiKey = values["api-key"]?.trim();
+  if (apiKey) {
+    return apiKey;
+  }
+
+  throw new Error("config set-openai-key requires --api-key-stdin, --api-key-env <name>, or --api-key");
+}
+
+async function readAll(input: AsyncIterable<string | Buffer>): Promise<string> {
+  const chunks: string[] = [];
+  for await (const chunk of input) {
+    chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+  }
+  return chunks.join("");
+}
+
 function parseOptionalInteger(raw: string | undefined, fieldName: string): number | undefined {
   if (raw === undefined) {
     return undefined;
@@ -645,10 +885,16 @@ function buildHelpText(): string {
     "  events <taskId>",
     "  interrupt <taskId>",
     "  resume <taskId>",
+    "  config status",
+    "  config set-openai-key (--api-key-stdin | --api-key-env <name> | --api-key <key>)",
+    "  config clear-openai-key",
+    "  config auth-chatgpt [--device-code] [--codex-path <path>]",
     "",
     "Storage:",
     "  --db-path <path>   Defaults to .plato/codex-runner/runner.sqlite",
     "  --log-path <path>  Defaults to the events.json file next to the database",
+    "  --config-path <path>   Defaults to ~/.plato/config.json for auth config",
+    "  --secrets-path <path>  Defaults to ~/.plato/secrets.json for auth secrets",
   ].join("\n");
 }
 

@@ -26,6 +26,7 @@ The current codebase already exercises a concrete slice of this design:
 - `CodexSdkBackedAgentSession` provides the Codex-SDK-backed execution path while normalizing events into the runner stream.
 - SQLite-backed task and session stores provide durable runner state through the shared `@plato/db` foundation.
 - File-backed log streaming still provides the ordered event trail used for inspection and recovery.
+- `@plato/config` provides local Codex auth configuration so real operator runs can pass user-provided OpenAI credentials into the Codex SDK.
 
 ## Task Lifecycle
 
@@ -69,6 +70,23 @@ The next product step beyond the current foundation is not "more task execution"
 Operators can inspect graph state with `getTaskGraph(taskId)` or `codex-runner graph status <taskId>`. Passing either a parent id or child id returns the parent, immediate children, dependencies, and aggregate graph state. Parent-scoped graph lifecycle events are emitted when the graph is created and when child tasks complete or fail. Worker/dependency events are emitted on child task streams when a dependency is satisfied, when a worker starts, or when a failed prerequisite blocks a dependent worker.
 
 The CLI accepts `--max-concurrent-tasks <n>` on `start` and `graph start` to tune how many runner tasks may be active at once for that operator runtime.
+
+## Codex Auth Configuration
+
+Before running real Codex-backed tasks, operators can configure local Codex auth:
+
+```sh
+codex-runner config status
+printf '%s' "$OPENAI_API_KEY" | codex-runner config set-openai-key --api-key-stdin
+# or: codex-runner config set-openai-key --api-key-env OPENAI_API_KEY
+codex-runner config auth-chatgpt
+codex-runner config auth-chatgpt --device-code
+codex-runner config clear-openai-key
+```
+
+Config defaults to `~/.plato/config.json`, with MVP local secret fallback storage at `~/.plato/secrets.json`. OpenAI API keys are stored in Plato's local secret fallback and passed to the Codex SDK as API-key auth.
+
+ChatGPT subscription auth follows the OpenClaw-style split route: `chatgpt_oauth` is distinct from `openai_api_key`, and the login flow is owned by Codex app-server. `auth-chatgpt` starts `codex app-server`, calls `account/login/start` with browser OAuth by default, or `chatgptDeviceCode` when `--device-code` is passed, then stores only safe account metadata in Plato config. Codex persists and refreshes the OAuth tokens in its own auth store.
 
 As the service grows, keep the domain language centered on `task`, `session`, `worktree`, `interrupt`, and `resume`. Those concepts are already the backbone of the implementation and should stay visible in the public API.
 
