@@ -761,6 +761,138 @@ describe("runCodexRunnerCli", () => {
     expect(JSON.parse(stdout.value)).toEqual(snapshot);
   });
 
+  it("reconciles graph results before printing inspection output", async () => {
+    const stdout = new BufferWriter();
+    const stderr = new BufferWriter();
+    const snapshot: RunnerTaskGraphResultSnapshot = {
+      parentTaskId: "task-parent",
+      results: [
+        {
+          resultId: "result-task-child",
+          taskId: "task-child",
+          parentTaskId: "task-parent",
+          classification: "completed",
+          summary: "Recovered child result",
+        },
+      ],
+    };
+    const calls: string[] = [];
+    const service: RunnerOperatorClient = {
+      async startTask() {
+        throw new Error("not used");
+      },
+      async createTaskGraph() {
+        throw new Error("not used");
+      },
+      async getTask() {
+        return undefined;
+      },
+      async getTaskGraph() {
+        return undefined;
+      },
+      async getTaskGraphResults() {
+        throw new Error("graph results should reconcile before inspecting");
+      },
+      async reconcileTaskGraphResults(taskId) {
+        calls.push(taskId);
+        return taskId === "task-parent" ? snapshot : undefined;
+      },
+      async getTaskStatus() {
+        return undefined;
+      },
+      async listTasks() {
+        return [];
+      },
+      async listTasksByState() {
+        return [];
+      },
+      async listEvents() {
+        return [];
+      },
+      async interruptTask() {},
+      async resumeTask() {
+        throw new Error("not used");
+      },
+    };
+
+    const exitCode = await runCodexRunnerCli(["graph", "results", "task-parent"], {
+      stdout,
+      stderr,
+      openRuntime: buildRuntime(service),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(calls).toEqual(["task-parent"]);
+    expect(stderr.value).toBe("");
+    expect(JSON.parse(stdout.value)).toEqual(snapshot);
+  });
+
+  it("reconciles graph synthesis before printing inspection output", async () => {
+    const stdout = new BufferWriter();
+    const stderr = new BufferWriter();
+    const snapshot: RunnerTaskGraphResultSnapshot = {
+      parentTaskId: "task-parent",
+      results: [],
+      synthesis: {
+        synthesisId: "synthesis-task-parent",
+        parentTaskId: "task-parent",
+        classification: "completed",
+        summary: "Recovered synthesis",
+        childTaskCount: 1,
+        resultIds: ["result-task-child"],
+      },
+    };
+    const calls: string[] = [];
+    const service: RunnerOperatorClient = {
+      async startTask() {
+        throw new Error("not used");
+      },
+      async createTaskGraph() {
+        throw new Error("not used");
+      },
+      async getTask() {
+        return undefined;
+      },
+      async getTaskGraph() {
+        return undefined;
+      },
+      async getTaskGraphResults() {
+        throw new Error("graph synthesis should reconcile before inspecting");
+      },
+      async reconcileTaskGraphResults(taskId) {
+        calls.push(taskId);
+        return taskId === "task-parent" ? snapshot : undefined;
+      },
+      async getTaskStatus() {
+        return undefined;
+      },
+      async listTasks() {
+        return [];
+      },
+      async listTasksByState() {
+        return [];
+      },
+      async listEvents() {
+        return [];
+      },
+      async interruptTask() {},
+      async resumeTask() {
+        throw new Error("not used");
+      },
+    };
+
+    const exitCode = await runCodexRunnerCli(["graph", "synthesis", "task-parent"], {
+      stdout,
+      stderr,
+      openRuntime: buildRuntime(service),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(calls).toEqual(["task-parent"]);
+    expect(stderr.value).toBe("");
+    expect(JSON.parse(stdout.value)).toEqual(snapshot.synthesis);
+  });
+
   it("prints only the parent synthesis for graph synthesis <taskId>", async () => {
     const stdout = new BufferWriter();
     const stderr = new BufferWriter();

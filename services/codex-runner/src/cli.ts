@@ -35,6 +35,7 @@ export interface RunnerOperatorClient {
   getTask(taskId: string): Promise<RunnerTaskRecord | undefined>;
   getTaskGraph(taskId: string): Promise<RunnerTaskGraphSnapshot | undefined>;
   getTaskGraphResults(taskId: string): Promise<RunnerTaskGraphResultSnapshot | undefined>;
+  reconcileTaskGraphResults?(taskId: string): Promise<RunnerTaskGraphResultSnapshot | undefined>;
   getTaskStatus(taskId: string): Promise<RunnerTaskStatusSnapshot | undefined>;
   listTasks(): Promise<RunnerTaskRecord[]>;
   listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]>;
@@ -263,7 +264,9 @@ async function loadGraphResults(
   }
 
   try {
-    const snapshot = await runtime.service.getTaskGraphResults(taskId);
+    const snapshot = runtime.service.reconcileTaskGraphResults
+      ? await runtime.service.reconcileTaskGraphResults(taskId)
+      : await runtime.service.getTaskGraphResults(taskId);
     if (!snapshot) {
       throw new Error(`Task graph ${taskId} was not found`);
     }

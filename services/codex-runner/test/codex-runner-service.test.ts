@@ -662,6 +662,46 @@ describe("CodexRunnerService", () => {
     ]);
   });
 
+  it("does not schedule a task graph parent as a worker", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+      },
+      children: [
+        {
+          taskId: "task-child",
+          prompt: "Do the work",
+        },
+      ],
+    });
+
+    expect(agentSession.started.map((session) => session.taskId)).toEqual(["task-child"]);
+    expect(worktreeManager.allocations.map((allocation) => allocation.taskId)).toEqual(["task-child"]);
+    const parentTask = await service.getTask("task-parent");
+    expect(parentTask).toMatchObject({
+      taskId: "task-parent",
+      state: "queued",
+    });
+    expect(parentTask).not.toHaveProperty("activeSessionId");
+    expect(parentTask).not.toHaveProperty("worktreePath");
+  });
+
   it("rejects a task graph with duplicate task ids before persisting it", async () => {
     const store = new InMemoryRunnerStore();
     const service = new CodexRunnerService({
@@ -1147,12 +1187,6 @@ describe("CodexRunnerService", () => {
       { taskId: "task-parent", type: "task.queued" },
       {
         taskId: "task-parent",
-        type: "task.started",
-        sessionId: "session-3",
-        worktreePath: "/repo/.plato/worktrees/task-parent",
-      },
-      {
-        taskId: "task-parent",
         type: "task.graph.result.collected",
         parentTaskId: "task-parent",
         childTaskId: "task-child-a",
@@ -1370,6 +1404,84 @@ describe("CodexRunnerService", () => {
     });
   });
 
+  it("synthesizes partial and conflicted child outputs when all workers succeed", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const resultCollector = new FakeTaskResultCollector();
+    const synthesizer = new FakeParentTaskOutcomeSynthesizer();
+    resultCollector.results.set("task-child-a", {
+      resultId: "result-a",
+      taskId: "task-child-a",
+      parentTaskId: "task-parent",
+      classification: "partial",
+      summary: "API complete, docs pending",
+    });
+    resultCollector.results.set("task-child-b", {
+      resultId: "result-b",
+      taskId: "task-child-b",
+      parentTaskId: "task-parent",
+      classification: "conflicted",
+      summary: "Both workers edited the same file",
+    });
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 2,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+      taskResultCollector: resultCollector,
+      parentTaskOutcomeSynthesizer: synthesizer,
+    });
+
+    await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+      },
+      children: [
+        {
+          taskId: "task-child-a",
+          prompt: "First child",
+        },
+        {
+          taskId: "task-child-b",
+          prompt: "Second child",
+        },
+      ],
+    });
+
+    await agentSession.exit("session-1", 0);
+    await agentSession.exit("session-2", 0);
+
+    await expect(service.getTaskGraphResults("task-parent")).resolves.toMatchObject({
+      parentTaskId: "task-parent",
+      results: [
+        {
+          resultId: "result-a",
+          classification: "partial",
+        },
+        {
+          resultId: "result-b",
+          classification: "conflicted",
+        },
+      ],
+      synthesis: {
+        synthesisId: "synthesis-task-parent",
+        parentTaskId: "task-parent",
+        classification: "partial",
+        summary: "Synthesized 2 results",
+        childTaskCount: 2,
+        resultIds: ["result-a", "result-b"],
+      },
+    });
+    expect(synthesizer.calls).toHaveLength(1);
+  });
+
   it("reconciles missing graph results for already-terminal children", async () => {
     const store = new InMemoryRunnerStore();
     const service = new CodexRunnerService({
@@ -1486,7 +1598,6 @@ describe("CodexRunnerService", () => {
 
     expect(agentSession.started.map((session) => session.taskId)).toEqual([
       "task-api",
-      "task-parent",
       "task-ui",
     ]);
     await expect(service.getTask("task-integration")).resolves.toMatchObject({
@@ -1504,11 +1615,10 @@ describe("CodexRunnerService", () => {
     await expect(service.getTask("task-integration")).resolves.toMatchObject({
       taskId: "task-integration",
       state: "running",
-      activeSessionId: "session-4",
+      activeSessionId: "session-3",
     });
     expect(agentSession.started.map((session) => session.taskId)).toEqual([
       "task-api",
-      "task-parent",
       "task-ui",
       "task-integration",
     ]);
@@ -1524,7 +1634,7 @@ describe("CodexRunnerService", () => {
       {
         taskId: "task-integration",
         type: "task.started",
-        sessionId: "session-4",
+        sessionId: "session-3",
         worktreePath: "/repo/.plato/worktrees/task-integration",
       },
       {
@@ -1532,7 +1642,7 @@ describe("CodexRunnerService", () => {
         type: "task.graph.worker.started",
         parentTaskId: "task-parent",
         dependencyTaskIds: ["task-api"],
-        sessionId: "session-4",
+        sessionId: "session-3",
         worktreePath: "/repo/.plato/worktrees/task-integration",
       },
     ]);
@@ -1577,7 +1687,7 @@ describe("CodexRunnerService", () => {
       ],
     });
 
-    await agentSession.exit("session-2", 1);
+    await agentSession.exit("session-1", 1);
 
     await expect(service.getTask("task-dependent")).resolves.toMatchObject({
       taskId: "task-dependent",
@@ -1595,7 +1705,6 @@ describe("CodexRunnerService", () => {
       activeSessionId: undefined,
     });
     expect(agentSession.started.map((session) => session.taskId)).toEqual([
-      "task-parent",
       "task-prereq",
     ]);
     await expect(service.listEvents("task-dependent")).resolves.toEqual([

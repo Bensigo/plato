@@ -388,30 +388,12 @@ export class CodexRunnerService {
   }
 
   async getTaskGraphResults(taskId: string): Promise<RunnerTaskGraphResultSnapshot | undefined> {
-    const task = await this.#store.getTask(taskId);
-    if (!task) {
-      return undefined;
-    }
-
-    const parentTask = task.decomposition ? await this.#store.getTask(task.decomposition.parentTaskId) : task;
-    if (!parentTask) {
-      return undefined;
-    }
-
-    return {
-      parentTaskId: parentTask.taskId,
-      results: await this.#store.listWorkerTaskResults(parentTask.taskId),
-      synthesis: await this.#store.getParentTaskSynthesis(parentTask.taskId),
-    };
+    const parentTask = await this.#resolveGraphParentTask(taskId);
+    return parentTask ? this.#getTaskGraphResults(parentTask.taskId) : undefined;
   }
 
   async reconcileTaskGraphResults(taskId: string): Promise<RunnerTaskGraphResultSnapshot | undefined> {
-    const task = await this.#store.getTask(taskId);
-    if (!task) {
-      return undefined;
-    }
-
-    const parentTask = task.decomposition ? await this.#store.getTask(task.decomposition.parentTaskId) : task;
+    const parentTask = await this.#resolveGraphParentTask(taskId);
     if (!parentTask) {
       return undefined;
     }
@@ -429,11 +411,11 @@ export class CodexRunnerService {
       }
     }
 
-    if (children.length > 0 && children.every((child) => child.state === "completed" || child.state === "failed")) {
+    if (children.length > 0 && areAllChildrenTerminal(children)) {
       await this.#ensureParentSynthesis(parentTask, children);
     }
 
-    return this.getTaskGraphResults(parentTask.taskId);
+    return this.#getTaskGraphResults(parentTask.taskId);
   }
 
   async getContextPackage(taskId: string) {
@@ -1012,6 +994,9 @@ export class CodexRunnerService {
   async #filterRunnableTasks(tasks: RunnerTaskRecord[]): Promise<RunnerTaskRecord[]> {
     const runnableTasks: RunnerTaskRecord[] = [];
     for (const task of tasks) {
+      if (await this.#isGraphCoordinatorTask(task)) {
+        continue;
+      }
       if (await this.#isTaskRunnable(task)) {
         runnableTasks.push(task);
       }
@@ -1029,6 +1014,14 @@ export class CodexRunnerService {
     }
 
     return true;
+  }
+
+  async #isGraphCoordinatorTask(task: RunnerTaskRecord): Promise<boolean> {
+    if (task.decomposition) {
+      return false;
+    }
+
+    return (await this.#store.listChildTasks(task.taskId)).length > 0;
   }
 
   async #failQueuedTasksWithFailedDependencies(): Promise<void> {
@@ -1166,7 +1159,7 @@ export class CodexRunnerService {
       graphState,
     });
 
-    if (graphState === "completed" || graphState === "failed") {
+    if (areAllChildrenTerminal(children)) {
       await this.#ensureParentSynthesis(parent, children);
     }
     await this.#emitGraphTerminalOnce(parentTaskId, graphState);
@@ -1325,6 +1318,23 @@ export class CodexRunnerService {
       resultClassification: normalizedSynthesis.classification,
       message: normalizedSynthesis.summary,
     });
+  }
+
+  async #resolveGraphParentTask(taskId: string): Promise<RunnerTaskRecord | undefined> {
+    const task = await this.#store.getTask(taskId);
+    if (!task) {
+      return undefined;
+    }
+
+    return task.decomposition ? this.#store.getTask(task.decomposition.parentTaskId) : task;
+  }
+
+  async #getTaskGraphResults(parentTaskId: string): Promise<RunnerTaskGraphResultSnapshot> {
+    return {
+      parentTaskId,
+      results: await this.#store.listWorkerTaskResults(parentTaskId),
+      synthesis: await this.#store.getParentTaskSynthesis(parentTaskId),
+    };
   }
 
   async #hasCapacity(): Promise<boolean> {
@@ -1521,7 +1531,7 @@ function buildParentSynthesisSummary(
 }
 
 function getGraphState(parent: RunnerTaskRecord, children: RunnerTaskRecord[]): RunnerTaskGraphState {
-  const tasks = [parent, ...children];
+  const tasks = children.length > 0 ? children : [parent];
   if (tasks.some((task) => task.state === "failed")) {
     return "failed";
   }
@@ -1539,4 +1549,8 @@ function getGraphState(parent: RunnerTaskRecord, children: RunnerTaskRecord[]): 
   }
 
   return "queued";
+}
+
+function areAllChildrenTerminal(children: RunnerTaskRecord[]): boolean {
+  return children.length > 0 && children.every((child) => child.state === "completed" || child.state === "failed");
 }
