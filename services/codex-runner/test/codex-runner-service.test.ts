@@ -1,3 +1,5 @@
+import { setTimeout } from "node:timers/promises";
+
 import { describe, expect, it } from "vitest";
 
 import { CodexRunnerService } from "../src/codex-runner-service.js";
@@ -131,9 +133,11 @@ class FakeWorktreeManager implements WorktreeManager {
 class FakeRuntimeManager implements CodexRuntimeManager {
   readonly calls: string[] = [];
   failure?: Error;
+  gate?: Promise<void>;
 
   async ensureReady(task: RunnerTaskRecord): Promise<void> {
     this.calls.push(task.taskId);
+    await this.gate;
     if (this.failure) {
       throw this.failure;
     }
@@ -204,6 +208,30 @@ class FakeTaskResultVerifier implements TaskResultVerifier {
   }
 }
 
+function createDeferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+
+  return { promise, resolve };
+}
+
+async function waitUntil(assertion: () => void): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await setTimeout(1);
+    }
+  }
+
+  throw lastError;
+}
+
 describe("CodexRunnerService", () => {
   const buildPendingApproval = (
     sessionId = "session-1",
@@ -267,6 +295,56 @@ describe("CodexRunnerService", () => {
         worktreePath: "/repo/.plato/worktrees/task-1",
       },
     ]);
+  });
+
+  it("serializes scheduler passes so concurrent admissions cannot oversubscribe capacity", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const runtimeManager = new FakeRuntimeManager();
+    const gate = createDeferred();
+    runtimeManager.gate = gate.promise;
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      runtimeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    const firstTask = service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "First",
+    });
+    await waitUntil(() => expect(runtimeManager.calls).toEqual(["task-1"]));
+
+    const secondTask = service.startTask({
+      taskId: "task-2",
+      repoPath: "/repo",
+      prompt: "Second",
+    });
+    await setTimeout(1);
+
+    expect(runtimeManager.calls).toEqual(["task-1"]);
+    expect(agentSession.started).toHaveLength(0);
+
+    gate.resolve();
+
+    await expect(firstTask).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "running",
+    });
+    await expect(secondTask).resolves.toMatchObject({
+      taskId: "task-2",
+      state: "queued",
+    });
+    expect(agentSession.started.map((session) => session.taskId)).toEqual(["task-1"]);
+    expect(worktreeManager.allocations).toHaveLength(1);
   });
 
   it("fails the task when codex runtime bootstrap fails", async () => {
@@ -983,11 +1061,13 @@ describe("CodexRunnerService", () => {
       state: "running",
     });
 
+    await agentSession.exit("session-3", 0);
     await agentSession.exit("session-2", 1);
 
     await expect(service.getTaskGraph("task-parent")).resolves.toMatchObject({
       parent: {
         taskId: "task-parent",
+        state: "failed",
       },
       state: "failed",
     });
@@ -1011,6 +1091,20 @@ describe("CodexRunnerService", () => {
         parentTaskId: "task-parent",
         childTaskId: "task-child-a",
         graphState: "running",
+      },
+      {
+        taskId: "task-parent",
+        type: "task.completed",
+        sessionId: "session-3",
+        worktreePath: "/repo/.plato/worktrees/task-parent",
+        exitCode: 0,
+      },
+      {
+        taskId: "task-parent",
+        type: "task.failed",
+        worktreePath: "/repo/.plato/worktrees/task-parent",
+        errorCode: "TASK_GRAPH_CHILD_FAILED",
+        message: "Graph failed because child task task-child-b failed",
       },
       {
         taskId: "task-parent",
@@ -1077,6 +1171,189 @@ describe("CodexRunnerService", () => {
       type: "task.graph.completed",
       parentTaskId: "task-parent",
       graphState: "completed",
+    });
+  });
+
+  it("runs only dependency-satisfied graph workers while independent workers run concurrently", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 4,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+      },
+      children: [
+        {
+          taskId: "task-api",
+          prompt: "Build API",
+        },
+        {
+          taskId: "task-ui",
+          prompt: "Build UI",
+        },
+        {
+          taskId: "task-integration",
+          prompt: "Wire integration",
+          priority: 100,
+          dependencyTaskIds: ["task-api"],
+        },
+      ],
+    });
+
+    expect(agentSession.started.map((session) => session.taskId)).toEqual([
+      "task-api",
+      "task-parent",
+      "task-ui",
+    ]);
+    await expect(service.getTask("task-integration")).resolves.toMatchObject({
+      taskId: "task-integration",
+      state: "queued",
+      decomposition: {
+        kind: "subtask",
+        parentTaskId: "task-parent",
+        dependencyTaskIds: ["task-api"],
+      },
+    });
+
+    await agentSession.exit("session-1", 0);
+
+    await expect(service.getTask("task-integration")).resolves.toMatchObject({
+      taskId: "task-integration",
+      state: "running",
+      activeSessionId: "session-4",
+    });
+    expect(agentSession.started.map((session) => session.taskId)).toEqual([
+      "task-api",
+      "task-parent",
+      "task-ui",
+      "task-integration",
+    ]);
+    await expect(service.listEvents("task-integration")).resolves.toEqual([
+      { taskId: "task-integration", type: "task.queued" },
+      {
+        taskId: "task-integration",
+        type: "task.graph.dependency.satisfied",
+        parentTaskId: "task-parent",
+        dependencyTaskId: "task-api",
+        dependencyTaskIds: ["task-api"],
+      },
+      {
+        taskId: "task-integration",
+        type: "task.started",
+        sessionId: "session-4",
+        worktreePath: "/repo/.plato/worktrees/task-integration",
+      },
+      {
+        taskId: "task-integration",
+        type: "task.graph.worker.started",
+        parentTaskId: "task-parent",
+        dependencyTaskIds: ["task-api"],
+        sessionId: "session-4",
+        worktreePath: "/repo/.plato/worktrees/task-integration",
+      },
+    ]);
+  });
+
+  it("blocks dependent graph workers when a prerequisite fails", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 3,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+      },
+      children: [
+        {
+          taskId: "task-prereq",
+          prompt: "Build prerequisite",
+        },
+        {
+          taskId: "task-dependent",
+          prompt: "Use prerequisite",
+          dependencyTaskIds: ["task-prereq"],
+        },
+        {
+          taskId: "task-docs",
+          prompt: "Document prerequisite",
+          dependencyTaskIds: ["task-prereq"],
+        },
+      ],
+    });
+
+    await agentSession.exit("session-2", 1);
+
+    await expect(service.getTask("task-dependent")).resolves.toMatchObject({
+      taskId: "task-dependent",
+      state: "failed",
+      activeSessionId: undefined,
+    });
+    await expect(service.getTask("task-docs")).resolves.toMatchObject({
+      taskId: "task-docs",
+      state: "failed",
+      activeSessionId: undefined,
+    });
+    await expect(service.getTask("task-parent")).resolves.toMatchObject({
+      taskId: "task-parent",
+      state: "failed",
+      activeSessionId: undefined,
+    });
+    expect(agentSession.started.map((session) => session.taskId)).toEqual([
+      "task-parent",
+      "task-prereq",
+    ]);
+    await expect(service.listEvents("task-dependent")).resolves.toEqual([
+      { taskId: "task-dependent", type: "task.queued" },
+      {
+        taskId: "task-dependent",
+        type: "task.graph.dependency.blocked",
+        parentTaskId: "task-parent",
+        dependencyTaskIds: ["task-prereq"],
+        blockedByTaskIds: ["task-prereq"],
+        errorCode: "TASK_GRAPH_DEPENDENCY_FAILED",
+        message: "Blocked by failed graph dependency task-prereq",
+      },
+      {
+        taskId: "task-dependent",
+        type: "task.failed",
+        errorCode: "TASK_GRAPH_DEPENDENCY_FAILED",
+        message: "Blocked by failed graph dependency task-prereq",
+      },
+    ]);
+    const parentEvents = await service.listEvents("task-parent");
+    expect(parentEvents.filter((event) => event.type === "task.graph.failed")).toHaveLength(1);
+    expect(parentEvents).toContainEqual({
+      taskId: "task-parent",
+      type: "task.failed",
+      sessionId: "session-1",
+      worktreePath: "/repo/.plato/worktrees/task-parent",
+      errorCode: "TASK_GRAPH_CHILD_FAILED",
+      message: "Graph failed because child task task-dependent failed",
     });
   });
 

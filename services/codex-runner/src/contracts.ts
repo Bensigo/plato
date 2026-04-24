@@ -181,6 +181,9 @@ export interface SessionEvent {
     | "task.graph.created"
     | "task.graph.child.completed"
     | "task.graph.child.failed"
+    | "task.graph.dependency.blocked"
+    | "task.graph.dependency.satisfied"
+    | "task.graph.worker.started"
     | "task.graph.completed"
     | "task.graph.failed"
     | "verification.started"
@@ -189,6 +192,9 @@ export interface SessionEvent {
   sessionId?: string;
   parentTaskId?: string;
   childTaskId?: string;
+  dependencyTaskId?: string;
+  dependencyTaskIds?: string[];
+  blockedByTaskIds?: string[];
   worktreePath?: string;
   graphState?: RunnerTaskGraphState;
   recoveredState?: "interrupted" | "failed" | "completed";

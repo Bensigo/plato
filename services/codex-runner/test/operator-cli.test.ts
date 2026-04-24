@@ -15,11 +15,15 @@ class BufferWriter {
 function buildRuntime(
   service: RunnerOperatorClient,
   close: () => void = () => {},
+  calls: OperatorRuntimeOptions[] = [],
 ): (options: OperatorRuntimeOptions) => OperatorRuntime {
-  return (_options) => ({
-    service,
-    close,
-  });
+  return (options) => {
+    calls.push(options);
+    return {
+      service,
+      close,
+    };
+  };
 }
 
 describe("runCodexRunnerCli", () => {
@@ -27,6 +31,7 @@ describe("runCodexRunnerCli", () => {
     const stdout = new BufferWriter();
     const stderr = new BufferWriter();
     const calls: Array<{ taskId: string; repoPath: string; prompt: string; priority?: number }> = [];
+    const runtimeCalls: OperatorRuntimeOptions[] = [];
     const service: RunnerOperatorClient = {
       async startTask(input) {
         calls.push(input);
@@ -70,12 +75,24 @@ describe("runCodexRunnerCli", () => {
     };
 
     const exitCode = await runCodexRunnerCli(
-      ["start", "--task-id", "task-1", "--repo-path", "/repo", "--prompt", "Ship it", "--priority", "4"],
+      [
+        "start",
+        "--task-id",
+        "task-1",
+        "--repo-path",
+        "/repo",
+        "--prompt",
+        "Ship it",
+        "--priority",
+        "4",
+        "--max-concurrent-tasks",
+        "5",
+      ],
       {
         cwd: "/workspace",
         stdout,
         stderr,
-        openRuntime: buildRuntime(service),
+        openRuntime: buildRuntime(service, () => {}, runtimeCalls),
       },
     );
 
@@ -87,6 +104,14 @@ describe("runCodexRunnerCli", () => {
         repoPath: "/repo",
         prompt: "Ship it",
         priority: 4,
+      },
+    ]);
+    expect(runtimeCalls).toEqual([
+      {
+        cwd: "/workspace",
+        dbPath: undefined,
+        logPath: undefined,
+        maxConcurrentTasks: 5,
       },
     ]);
     expect(JSON.parse(stdout.value)).toEqual({
@@ -284,6 +309,7 @@ describe("runCodexRunnerCli", () => {
     const stdout = new BufferWriter();
     const stderr = new BufferWriter();
     const calls: unknown[] = [];
+    const runtimeCalls: OperatorRuntimeOptions[] = [];
     const graph = {
       parent: {
         taskId: "task-parent",
@@ -349,13 +375,22 @@ describe("runCodexRunnerCli", () => {
         "/repo",
         "--prompt",
         "Coordinate",
+        "--max-concurrent-tasks",
+        "7",
         "--child",
         "task-child:Build API:3",
+        "--child",
+        JSON.stringify({
+          taskId: "task-docs",
+          prompt: "Write docs",
+          priority: 1,
+          dependencyTaskIds: ["task-child"],
+        }),
       ],
       {
         stdout,
         stderr,
-        openRuntime: buildRuntime(service),
+        openRuntime: buildRuntime(service, () => {}, runtimeCalls),
       },
     );
 
@@ -375,7 +410,21 @@ describe("runCodexRunnerCli", () => {
             prompt: "Build API",
             priority: 3,
           },
+          {
+            taskId: "task-docs",
+            prompt: "Write docs",
+            priority: 1,
+            dependencyTaskIds: ["task-child"],
+          },
         ],
+      },
+    ]);
+    expect(runtimeCalls).toEqual([
+      {
+        cwd: expect.any(String),
+        dbPath: undefined,
+        logPath: undefined,
+        maxConcurrentTasks: 7,
       },
     ]);
     expect(JSON.parse(stdout.value)).toEqual(graph);

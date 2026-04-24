@@ -163,7 +163,9 @@ stateDiagram-v2
 ### 5.2 Scheduling Rules
 
 - Admission is append-only: a new task is persisted before scheduling starts.
-- Scheduling is capacity-aware and priority-ordered.
+- Scheduling is capacity-aware and priority-ordered among runnable tasks.
+- Graph workers with `dependencyTaskIds` are runnable only after all prerequisites complete.
+- Failed graph prerequisites fail queued dependents with explicit dependency-blocked events.
 - Runtime readiness must happen before worktree allocation and session start.
 - Worktree reuse is preferred on resume.
 - Only one orchestration layer should choose the next runnable task.

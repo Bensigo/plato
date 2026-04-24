@@ -43,6 +43,8 @@ export class CodexRunnerService {
   readonly #runtimeManager?: CodexRuntimeManager;
   readonly #taskResultVerifier?: TaskResultVerifier;
   readonly #maxConcurrentTasks: number;
+  #scheduleInFlight?: Promise<void>;
+  #scheduleAgain = false;
 
   constructor(deps: CodexRunnerServiceDeps) {
     this.#store = deps.store;
@@ -288,6 +290,8 @@ export class CodexRunnerService {
       errorCode: "TASK_APPROVAL_REJECTED",
       message: reason,
     });
+    await this.#failQueuedDependents(failedTask);
+    await this.#emitGraphLifecycleForTask(failedTask);
     await this.#scheduleQueuedTasks();
 
     return failedTask;
@@ -466,9 +470,30 @@ export class CodexRunnerService {
   }
 
   async #scheduleQueuedTasks(): Promise<void> {
+    if (this.#scheduleInFlight) {
+      this.#scheduleAgain = true;
+      await this.#scheduleInFlight;
+      return;
+    }
+
+    this.#scheduleInFlight = this.#runScheduleLoop();
+    try {
+      await this.#scheduleInFlight;
+    } finally {
+      this.#scheduleInFlight = undefined;
+      if (this.#scheduleAgain) {
+        this.#scheduleAgain = false;
+        await this.#scheduleQueuedTasks();
+      }
+    }
+  }
+
+  async #runScheduleLoop(): Promise<void> {
     while (await this.#hasCapacity()) {
+      await this.#failQueuedTasksWithFailedDependencies();
       const queuedTasks = await this.#store.listTasksByState("queued");
-      const nextTask = queuedTasks
+      const runnableTasks = await this.#filterRunnableTasks(queuedTasks);
+      const nextTask = runnableTasks
         .slice()
         .sort((left, right) => right.priority - left.priority || left.taskId.localeCompare(right.taskId))[0];
 
@@ -494,6 +519,8 @@ export class CodexRunnerService {
           errorCode: error instanceof Error && "code" in error ? String(error.code) : "CODEX_RUNTIME_FAILED",
           message: error instanceof Error ? error.message : "Unknown Codex runtime failure",
         });
+        await this.#failQueuedDependents(failedTask);
+        await this.#emitGraphLifecycleForTask(failedTask);
         continue;
       }
 
@@ -529,6 +556,8 @@ export class CodexRunnerService {
           errorCode: provisioningError.code,
           message: provisioningError.message,
         });
+        await this.#failQueuedDependents(failedTask);
+        await this.#emitGraphLifecycleForTask(failedTask);
         continue;
       }
 
@@ -567,6 +596,7 @@ export class CodexRunnerService {
       sessionId: session.sessionId,
       worktreePath: allocation.worktreePath,
     });
+    await this.#emitGraphWorkerStarted(runningTask);
 
     return runningTask;
   }
@@ -876,6 +906,7 @@ export class CodexRunnerService {
       worktreePath: session.worktreePath,
       exitCode: session.exitCode,
     });
+    await this.#emitDependencySatisfied(nextTask);
     await this.#emitGraphLifecycleForTask(nextTask);
   }
 
@@ -905,7 +936,121 @@ export class CodexRunnerService {
       errorCode: failure.errorCode,
       message: failure.message,
     });
+    await this.#failQueuedDependents(nextTask);
     await this.#emitGraphLifecycleForTask(nextTask);
+  }
+
+  async #filterRunnableTasks(tasks: RunnerTaskRecord[]): Promise<RunnerTaskRecord[]> {
+    const runnableTasks: RunnerTaskRecord[] = [];
+    for (const task of tasks) {
+      if (await this.#isTaskRunnable(task)) {
+        runnableTasks.push(task);
+      }
+    }
+
+    return runnableTasks;
+  }
+
+  async #isTaskRunnable(task: RunnerTaskRecord): Promise<boolean> {
+    for (const dependencyTaskId of getTaskDependencyIds(task)) {
+      const dependency = await this.#store.getTask(dependencyTaskId);
+      if (dependency?.state !== "completed") {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  async #failQueuedTasksWithFailedDependencies(): Promise<void> {
+    const queuedTasks = await this.#store.listTasksByState("queued");
+    for (const task of queuedTasks) {
+      const failedDependencies = await this.#listFailedDependencies(task);
+      if (failedDependencies.length > 0) {
+        await this.#persistDependencyBlockedTask(task, failedDependencies);
+      }
+    }
+  }
+
+  async #failQueuedDependents(failedTask: RunnerTaskRecord): Promise<void> {
+    const queuedTasks = await this.#store.listTasksByState("queued");
+    for (const task of queuedTasks) {
+      if (getTaskDependencyIds(task).includes(failedTask.taskId)) {
+        await this.#persistDependencyBlockedTask(task, [failedTask.taskId]);
+      }
+    }
+  }
+
+  async #listFailedDependencies(task: RunnerTaskRecord): Promise<string[]> {
+    const failedDependencies: string[] = [];
+    for (const dependencyTaskId of getTaskDependencyIds(task)) {
+      const dependency = await this.#store.getTask(dependencyTaskId);
+      if (dependency?.state === "failed") {
+        failedDependencies.push(dependencyTaskId);
+      }
+    }
+
+    return failedDependencies;
+  }
+
+  async #persistDependencyBlockedTask(
+    task: RunnerTaskRecord,
+    failedDependencyTaskIds: string[],
+  ): Promise<void> {
+    const nextTask: RunnerTaskRecord = {
+      ...task,
+      state: "failed",
+      activeSessionId: undefined,
+    };
+
+    await this.#store.saveTask(nextTask);
+    await this.#logStreamer.append({
+      taskId: task.taskId,
+      type: "task.graph.dependency.blocked",
+      parentTaskId: task.decomposition?.parentTaskId,
+      dependencyTaskIds: getTaskDependencyIds(task),
+      blockedByTaskIds: failedDependencyTaskIds,
+      errorCode: "TASK_GRAPH_DEPENDENCY_FAILED",
+      message: `Blocked by failed graph dependency ${failedDependencyTaskIds.join(", ")}`,
+    });
+    await this.#logStreamer.append({
+      taskId: task.taskId,
+      type: "task.failed",
+      errorCode: "TASK_GRAPH_DEPENDENCY_FAILED",
+      message: `Blocked by failed graph dependency ${failedDependencyTaskIds.join(", ")}`,
+    });
+    await this.#emitGraphLifecycleForTask(nextTask);
+  }
+
+  async #emitDependencySatisfied(task: RunnerTaskRecord): Promise<void> {
+    const queuedTasks = await this.#store.listTasksByState("queued");
+    for (const queuedTask of queuedTasks) {
+      const dependencyTaskIds = getTaskDependencyIds(queuedTask);
+      if (dependencyTaskIds.includes(task.taskId)) {
+        await this.#logStreamer.append({
+          taskId: queuedTask.taskId,
+          type: "task.graph.dependency.satisfied",
+          parentTaskId: queuedTask.decomposition?.parentTaskId,
+          dependencyTaskId: task.taskId,
+          dependencyTaskIds,
+        });
+      }
+    }
+  }
+
+  async #emitGraphWorkerStarted(task: RunnerTaskRecord): Promise<void> {
+    if (!task.decomposition?.parentTaskId) {
+      return;
+    }
+
+    await this.#logStreamer.append({
+      taskId: task.taskId,
+      type: "task.graph.worker.started",
+      parentTaskId: task.decomposition.parentTaskId,
+      dependencyTaskIds: getTaskDependencyIds(task),
+      sessionId: task.activeSessionId,
+      worktreePath: task.worktreePath,
+    });
   }
 
   async #emitGraphLifecycleForTask(task: RunnerTaskRecord): Promise<void> {
@@ -921,9 +1066,13 @@ export class CodexRunnerService {
       return;
     }
 
-    const parent = await this.#store.getTask(parentTaskId);
+    let parent = await this.#store.getTask(parentTaskId);
     if (!parent) {
       return;
+    }
+
+    if (task.state === "failed") {
+      parent = await this.#propagateGraphFailureToParent(parent, task);
     }
 
     const children = await this.#store.listChildTasks(parentTaskId);
@@ -962,6 +1111,37 @@ export class CodexRunnerService {
       parentTaskId,
       graphState,
     });
+  }
+
+  async #propagateGraphFailureToParent(
+    parent: RunnerTaskRecord,
+    failedChild: RunnerTaskRecord,
+  ): Promise<RunnerTaskRecord> {
+    if (parent.state === "failed") {
+      return parent;
+    }
+
+    const failedParent: RunnerTaskRecord = {
+      ...parent,
+      state: "failed",
+      activeSessionId: undefined,
+    };
+
+    await this.#store.saveTask(failedParent);
+    await this.#saveSessionCheckpoint(parent, {
+      state: "failed",
+      exitCode: null,
+    });
+    await this.#logStreamer.append({
+      taskId: parent.taskId,
+      type: "task.failed",
+      sessionId: parent.activeSessionId,
+      worktreePath: parent.worktreePath,
+      errorCode: "TASK_GRAPH_CHILD_FAILED",
+      message: `Graph failed because child task ${failedChild.taskId} failed`,
+    });
+
+    return failedParent;
   }
 
   async #hasCapacity(): Promise<boolean> {
@@ -1052,6 +1232,10 @@ function findChildDependencyCycle(
   }
 
   return undefined;
+}
+
+function getTaskDependencyIds(task: RunnerTaskRecord): string[] {
+  return task.decomposition?.dependencyTaskIds ?? [];
 }
 
 function getGraphState(parent: RunnerTaskRecord, children: RunnerTaskRecord[]): RunnerTaskGraphState {
