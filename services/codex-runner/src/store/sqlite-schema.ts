@@ -8,7 +8,6 @@ export function bootstrapCodexRunnerSchema(connection: DatabaseSync): void {
       prompt TEXT NOT NULL,
       priority INTEGER NOT NULL,
       state TEXT NOT NULL,
-      dependency_task_ids_json TEXT NOT NULL DEFAULT '[]',
       worktree_path TEXT,
       active_session_id TEXT,
       decomposition_kind TEXT,
@@ -72,7 +71,6 @@ export function bootstrapCodexRunnerSchema(connection: DatabaseSync): void {
   `);
 
   ensureColumn(connection, "runner_tasks", "pending_approval_request_id", "TEXT");
-  ensureColumn(connection, "runner_tasks", "dependency_task_ids_json", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(connection, "runner_tasks", "decomposition_kind", "TEXT");
   ensureColumn(connection, "runner_tasks", "parent_task_id", "TEXT");
   ensureColumn(connection, "runner_tasks", "dependency_task_ids_json", "TEXT");

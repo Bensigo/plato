@@ -380,7 +380,12 @@ describe("runCodexRunnerCli", () => {
         "--child",
         "task-child:Build API:3",
         "--child",
-        "task-docs:Write docs:1:task-child",
+        JSON.stringify({
+          taskId: "task-docs",
+          prompt: "Write docs",
+          priority: 1,
+          dependencyTaskIds: ["task-child"],
+        }),
       ],
       {
         stdout,
