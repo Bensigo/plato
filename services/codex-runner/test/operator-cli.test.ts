@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -102,6 +103,10 @@ describe("runCodexRunnerCli", () => {
         "4",
         "--max-concurrent-tasks",
         "5",
+        "--config-path",
+        "/tmp/plato-config.json",
+        "--secrets-path",
+        "/tmp/plato-secrets.json",
       ],
       {
         cwd: "/workspace",
@@ -126,6 +131,8 @@ describe("runCodexRunnerCli", () => {
         cwd: "/workspace",
         dbPath: undefined,
         logPath: undefined,
+        configPath: "/tmp/plato-config.json",
+        secretsPath: "/tmp/plato-secrets.json",
         maxConcurrentTasks: 5,
       },
     ]);
@@ -404,6 +411,10 @@ describe("runCodexRunnerCli", () => {
         "Coordinate",
         "--max-concurrent-tasks",
         "7",
+        "--config-path",
+        "/tmp/plato-graph-config.json",
+        "--secrets-path",
+        "/tmp/plato-graph-secrets.json",
         "--child",
         "task-child:Build API:3",
         "--child",
@@ -451,6 +462,8 @@ describe("runCodexRunnerCli", () => {
         cwd: expect.any(String),
         dbPath: undefined,
         logPath: undefined,
+        configPath: "/tmp/plato-graph-config.json",
+        secretsPath: "/tmp/plato-graph-secrets.json",
         maxConcurrentTasks: 7,
       },
     ]);
@@ -1032,7 +1045,7 @@ describe("runCodexRunnerCli", () => {
     expect(JSON.parse(stdout.value)).toEqual(snapshot);
   });
 
-  it("configures and clears an OpenAI API key for Codex auth", async () => {
+  it("configures and clears an OpenAI API key for Codex auth from stdin", async () => {
     const tempDir = await createTempDir("codex-runner-config-");
     try {
       const configPath = `${tempDir}/config.json`;
@@ -1044,14 +1057,13 @@ describe("runCodexRunnerCli", () => {
         [
           "config",
           "set-openai-key",
-          "--api-key",
-          "sk-test-abcdef",
+          "--api-key-stdin",
           "--config-path",
           configPath,
           "--secrets-path",
           secretsPath,
         ],
-        { stdout, stderr },
+        { stdout, stderr, stdin: Readable.from(["sk-test-abcdef\n"]) },
       );
 
       expect(setExitCode).toBe(0);

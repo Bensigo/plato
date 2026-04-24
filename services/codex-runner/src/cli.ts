@@ -63,6 +63,7 @@ export interface OperatorRuntimeOptions {
 
 export interface RunCodexRunnerCliOptions {
   cwd?: string;
+  stdin?: AsyncIterable<string | Buffer>;
   stdout?: Writer;
   stderr?: Writer;
   openRuntime?: (options: OperatorRuntimeOptions) => Promise<OperatorRuntime> | OperatorRuntime;
@@ -98,7 +99,7 @@ export async function runCodexRunnerCli(
       case "resume":
         return await handleResume(rest, { cwd, stdout, openRuntime });
       case "config":
-        return await handleConfig(rest, { cwd, stdout });
+        return await handleConfig(rest, { cwd, stdin: options.stdin, stdout });
       default:
         stderr.write(`Unknown command: ${command}\n\n${buildHelpText()}\n`);
         return 1;
@@ -111,7 +112,7 @@ export async function runCodexRunnerCli(
 
 async function handleConfig(
   argv: string[],
-  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout">,
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdin" | "stdout">,
 ): Promise<number> {
   const [subcommand, ...rest] = argv;
   switch (subcommand) {
@@ -139,21 +140,20 @@ async function handleConfigStatus(
 
 async function handleConfigSetOpenAIKey(
   argv: string[],
-  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout">,
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdin" | "stdout">,
 ): Promise<number> {
   const parsed = parseArgs({
     args: argv,
     allowPositionals: false,
     options: {
       "api-key": { type: "string" },
+      "api-key-env": { type: "string" },
+      "api-key-stdin": { type: "boolean", default: false },
       "config-path": { type: "string" },
       "secrets-path": { type: "string" },
     },
   });
-  const apiKey = parsed.values["api-key"]?.trim();
-  if (!apiKey) {
-    throw new Error("config set-openai-key requires --api-key");
-  }
+  const apiKey = await resolveOpenAIApiKeyInput(parsed.values, options.stdin ?? process.stdin);
 
   const service = createFileBackedPlatoConfigService({
     configPath: resolveOptionalPath(options.cwd, parsed.values["config-path"]),
@@ -207,6 +207,8 @@ async function handleGraphStart(
       "max-concurrent-tasks": { type: "string" },
       "db-path": { type: "string" },
       "log-path": { type: "string" },
+      "config-path": { type: "string" },
+      "secrets-path": { type: "string" },
     },
   });
   const prompt = parsed.values.prompt?.trim();
@@ -219,6 +221,8 @@ async function handleGraphStart(
     cwd: options.cwd,
     dbPath: parsed.values["db-path"],
     logPath: parsed.values["log-path"],
+    configPath: parsed.values["config-path"],
+    secretsPath: parsed.values["secrets-path"],
     maxConcurrentTasks: parseOptionalInteger(parsed.values["max-concurrent-tasks"], "max concurrent tasks"),
   });
 
@@ -401,6 +405,8 @@ async function handleStart(
       "max-concurrent-tasks": { type: "string" },
       "db-path": { type: "string" },
       "log-path": { type: "string" },
+      "config-path": { type: "string" },
+      "secrets-path": { type: "string" },
     },
   });
   const prompt = parsed.values.prompt?.trim();
@@ -412,6 +418,8 @@ async function handleStart(
     cwd: options.cwd,
     dbPath: parsed.values["db-path"],
     logPath: parsed.values["log-path"],
+    configPath: parsed.values["config-path"],
+    secretsPath: parsed.values["secrets-path"],
     maxConcurrentTasks: parseOptionalInteger(parsed.values["max-concurrent-tasks"], "max concurrent tasks"),
   });
 
@@ -621,6 +629,47 @@ function resolveOptionalPath(cwd: string | undefined, path: string | undefined):
   return path ? resolve(cwd ?? process.cwd(), path) : undefined;
 }
 
+async function resolveOpenAIApiKeyInput(
+  values: {
+    "api-key"?: string;
+    "api-key-env"?: string;
+    "api-key-stdin"?: boolean;
+  },
+  stdin: AsyncIterable<string | Buffer>,
+): Promise<string> {
+  if (values["api-key-stdin"]) {
+    const apiKey = (await readAll(stdin)).trim();
+    if (!apiKey) {
+      throw new Error("config set-openai-key received an empty API key from stdin");
+    }
+    return apiKey;
+  }
+
+  const envName = values["api-key-env"]?.trim();
+  if (envName) {
+    const apiKey = process.env[envName]?.trim();
+    if (!apiKey) {
+      throw new Error(`Environment variable ${envName} does not contain an OpenAI API key`);
+    }
+    return apiKey;
+  }
+
+  const apiKey = values["api-key"]?.trim();
+  if (apiKey) {
+    return apiKey;
+  }
+
+  throw new Error("config set-openai-key requires --api-key-stdin, --api-key-env <name>, or --api-key");
+}
+
+async function readAll(input: AsyncIterable<string | Buffer>): Promise<string> {
+  const chunks: string[] = [];
+  for await (const chunk of input) {
+    chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+  }
+  return chunks.join("");
+}
+
 function parseOptionalInteger(raw: string | undefined, fieldName: string): number | undefined {
   if (raw === undefined) {
     return undefined;
@@ -755,15 +804,15 @@ function buildHelpText(): string {
     "  interrupt <taskId>",
     "  resume <taskId>",
     "  config status",
-    "  config set-openai-key --api-key <key>",
+    "  config set-openai-key (--api-key-stdin | --api-key-env <name> | --api-key <key>)",
     "  config clear-openai-key",
     "  config auth-chatgpt",
     "",
     "Storage:",
     "  --db-path <path>   Defaults to .plato/codex-runner/runner.sqlite",
     "  --log-path <path>  Defaults to the events.json file next to the database",
-    "  --config-path <path>   Defaults to ~/.plato/config.json for config commands",
-    "  --secrets-path <path>  Defaults to ~/.plato/secrets.json for config commands",
+    "  --config-path <path>   Defaults to ~/.plato/config.json for auth config",
+    "  --secrets-path <path>  Defaults to ~/.plato/secrets.json for auth secrets",
   ].join("\n");
 }
 

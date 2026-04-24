@@ -77,7 +77,8 @@ Before running real Codex-backed tasks, operators can configure local Codex auth
 
 ```sh
 codex-runner config status
-codex-runner config set-openai-key --api-key "$OPENAI_API_KEY"
+printf '%s' "$OPENAI_API_KEY" | codex-runner config set-openai-key --api-key-stdin
+# or: codex-runner config set-openai-key --api-key-env OPENAI_API_KEY
 codex-runner config clear-openai-key
 ```
 
