@@ -7,6 +7,7 @@ Plato is a monorepo with user-facing applications in `apps/` and backend or infr
 ## Monorepo Rules
 
 - Prefer adding behavior in the most specific workspace that owns it instead of creating cross-cutting helpers too early.
+- Decouple things that can be decoupled. Product-facing contracts should not depend on a specific backend when a narrow interface or adapter can preserve the boundary.
 - Keep service boundaries explicit. Shared concepts should be modeled through contracts and interfaces, not hidden coupling.
 - When a workspace has its own `AGENTS.md`, follow the workspace-local rules in addition to these repo-level rules.
 

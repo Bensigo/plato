@@ -82,6 +82,22 @@ What this unlocks:
 
 Hermes, OpenClaw, or other personal agents can call Plato as a reusable local orchestration tool instead of embedding orchestration logic directly.
 
+## Milestone 5a: Agent-Agnostic Orchestration Boundary
+
+Goal: keep Plato's product-facing orchestration model independent from any one agent backend.
+
+Deliverables:
+
+- neutral task, graph, event, result, and agent runtime contracts
+- a small orchestration service that routes work to registered agent runtimes
+- a Codex runner adapter as the first backend implementation
+- tests proving orchestration callers do not depend on Codex-specific fields
+- docs that make the boundary explicit before MCP is added
+
+What this unlocks:
+
+MCP and future CLI surfaces can speak Plato orchestration concepts while Codex, Hermes, OpenClaw, or other agent runtimes plug in behind the same boundary.
+
 ## Milestone 6: Smarter Decomposition and Policies
 
 Goal: improve the quality and safety of decomposition and coordination.
@@ -99,6 +115,6 @@ Faster and better task completion with more predictable behavior and fewer waste
 
 ## Immediate Next Step
 
-The next implementation milestone should be Milestone 2: Durable Subtask Graph.
+The next implementation milestone should be Milestone 5a: Agent-Agnostic Orchestration Boundary.
 
-That is the smallest meaningful product step because it introduces the core orchestration object model Plato needs before parallel worker spawning, result synthesis, and MCP control surfaces can be built safely.
+That is the smallest meaningful product step after the merged graph, worker, synthesis, and auth work because MCP should depend on Plato-level orchestration contracts rather than the Codex-specific runner package.
