@@ -8,8 +8,23 @@ export interface PlatoConfigRecord {
   codexAuth?: {
     provider: CodexAuthProvider;
     openAIApiKeySecretRef?: string;
-    chatGptOAuthAccountId?: string;
+    chatGptOAuth?: ChatGptOAuthConfig;
   };
+}
+
+export interface ChatGptOAuthConfig {
+  accountId: string;
+  email?: string;
+  planType?: string;
+  tokenSource: "codex_app_server";
+  updatedAt: string;
+}
+
+export interface SetChatGptOAuthAccountInput {
+  accountId?: string;
+  email?: string;
+  planType?: string;
+  updatedAt?: string;
 }
 
 export interface CodexAuthStatus {
@@ -21,6 +36,10 @@ export interface CodexAuthStatus {
   };
   chatGptOAuth?: {
     accountId?: string;
+    email?: string;
+    planType?: string;
+    tokenSource?: "codex_app_server";
+    updatedAt?: string;
     configured: boolean;
   };
 }
@@ -33,7 +52,7 @@ export interface PlatoConfigStatus {
 export interface ResolvedCodexAuth {
   provider: CodexAuthProvider;
   openAIApiKey?: string;
-  chatGptOAuthAccountId?: string;
+  chatGptOAuth?: ChatGptOAuthConfig;
 }
 
 export interface ConfigStore {
@@ -93,11 +112,15 @@ export class PlatoConfigService {
       return {
         configPath: this.#configStore.path,
         codexAuth: {
-          configured: Boolean(auth.chatGptOAuthAccountId),
+          configured: Boolean(auth.chatGptOAuth?.accountId),
           provider: "chatgpt_oauth",
           chatGptOAuth: {
-            accountId: auth.chatGptOAuthAccountId,
-            configured: Boolean(auth.chatGptOAuthAccountId),
+            accountId: auth.chatGptOAuth?.accountId,
+            email: auth.chatGptOAuth?.email,
+            planType: auth.chatGptOAuth?.planType,
+            tokenSource: auth.chatGptOAuth?.tokenSource,
+            updatedAt: auth.chatGptOAuth?.updatedAt,
+            configured: Boolean(auth.chatGptOAuth?.accountId),
           },
         },
       };
@@ -131,6 +154,28 @@ export class PlatoConfigService {
     return this.getStatus();
   }
 
+  async setChatGptOAuthAccount(input: SetChatGptOAuthAccountInput = {}): Promise<PlatoConfigStatus> {
+    const accountId = input.accountId?.trim() || input.email?.trim() || "codex-chatgpt";
+    const email = input.email?.trim();
+    const planType = input.planType?.trim();
+
+    await this.#configStore.write({
+      ...(await this.#configStore.read()),
+      codexAuth: {
+        provider: "chatgpt_oauth",
+        chatGptOAuth: {
+          accountId,
+          email: email || undefined,
+          planType: planType || undefined,
+          tokenSource: "codex_app_server",
+          updatedAt: input.updatedAt ?? new Date().toISOString(),
+        },
+      },
+    });
+
+    return this.getStatus();
+  }
+
   async clearCodexAuth(): Promise<PlatoConfigStatus> {
     const config = await this.#configStore.read();
     if (config.codexAuth?.openAIApiKeySecretRef) {
@@ -157,10 +202,10 @@ export class PlatoConfigService {
       return openAIApiKey ? { provider: "openai_api_key", openAIApiKey } : undefined;
     }
 
-    if (auth.provider === "chatgpt_oauth" && auth.chatGptOAuthAccountId) {
+    if (auth.provider === "chatgpt_oauth" && auth.chatGptOAuth?.accountId) {
       return {
         provider: "chatgpt_oauth",
-        chatGptOAuthAccountId: auth.chatGptOAuthAccountId,
+        chatGptOAuth: auth.chatGptOAuth,
       };
     }
 

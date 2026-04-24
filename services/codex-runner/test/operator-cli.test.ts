@@ -1110,19 +1110,76 @@ describe("runCodexRunnerCli", () => {
     }
   });
 
-  it("reports ChatGPT OAuth as an explicit future auth path", async () => {
+  it("runs ChatGPT OAuth through Codex app-server and stores account metadata", async () => {
+    const tempDir = await createTempDir("plato-runner-");
+    const configPath = `${tempDir}/config.json`;
+    const secretsPath = `${tempDir}/secrets.json`;
     const stdout = new BufferWriter();
     const stderr = new BufferWriter();
 
-    const exitCode = await runCodexRunnerCli(["config", "auth-chatgpt"], {
-      stdout,
-      stderr,
-    });
+    try {
+      const exitCode = await runCodexRunnerCli(
+        [
+          "config",
+          "auth-chatgpt",
+          "--device-code",
+          "--config-path",
+          configPath,
+          "--secrets-path",
+          secretsPath,
+        ],
+        {
+          stdout,
+          stderr,
+          openCodexAuthClient: () => ({
+            async startChatGptOAuthLogin(options) {
+              options.onLoginStarted?.({
+                type: "device_code",
+                loginId: "login-1",
+                verificationUrl: "https://auth.openai.com/codex/device",
+                userCode: "ABCD-1234",
+              });
+              return {
+                account: {
+                  authMode: "chatgpt",
+                  email: "user@example.com",
+                  planType: "plus",
+                },
+              };
+            },
+            close() {},
+          }),
+        },
+      );
 
-    expect(exitCode).toBe(1);
-    expect(stdout.value).toBe("");
-    expect(stderr.value).toBe(
-      "ChatGPT OAuth is not implemented yet; use config set-openai-key for Milestone 21\n",
-    );
+      expect(exitCode).toBe(0);
+      expect(stderr.value).toBe("");
+      const lines = JSON.parse(`[${stdout.value.trim().replaceAll("\n}\n{", "\n},\n{")}]`);
+      expect(lines[0]).toEqual({
+        event: "chatgpt_login_started",
+        login: {
+          type: "device_code",
+          loginId: "login-1",
+          verificationUrl: "https://auth.openai.com/codex/device",
+          userCode: "ABCD-1234",
+        },
+      });
+      expect(lines[1]).toMatchObject({
+        configPath,
+        codexAuth: {
+          configured: true,
+          provider: "chatgpt_oauth",
+          chatGptOAuth: {
+            accountId: "user@example.com",
+            email: "user@example.com",
+            planType: "plus",
+            tokenSource: "codex_app_server",
+          },
+        },
+      });
+      await expect(resolveCodexOptionsFromConfig({ configPath, secretsPath })).resolves.toBeUndefined();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
