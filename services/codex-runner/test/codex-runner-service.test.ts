@@ -14,6 +14,9 @@ import {
   WorktreeProvisioningError,
   type LogStreamer,
   ManagedSession,
+  type ParentTaskOutcomeSynthesizer,
+  type ParentTaskSynthesisContext,
+  type ParentTaskSynthesisRecord,
   type PendingApprovalRecord,
   RunnerStore,
   type RunnerSessionRecord,
@@ -21,6 +24,9 @@ import {
   RunnerTaskState,
   SessionStore,
   SessionEvent,
+  type TaskResultCollector,
+  type WorkerTaskResultCollectionContext,
+  type WorkerTaskResultRecord,
   type TaskResultVerifier,
   type TaskVerificationContext,
   type TaskVerificationResult,
@@ -31,6 +37,8 @@ import {
 class InMemoryRunnerStore implements RunnerStore {
   readonly #tasks = new Map<string, RunnerTaskRecord>();
   readonly #contextPackages = new Map<string, ContextPackageRecord>();
+  readonly #workerResults = new Map<string, WorkerTaskResultRecord>();
+  readonly #parentSyntheses = new Map<string, ParentTaskSynthesisRecord>();
 
   async saveTask(task: RunnerTaskRecord): Promise<void> {
     this.#tasks.set(task.taskId, task);
@@ -77,6 +85,30 @@ class InMemoryRunnerStore implements RunnerStore {
 
   async getContextPackage(taskId: string): Promise<ContextPackageRecord | undefined> {
     return this.#contextPackages.get(taskId);
+  }
+
+  async saveWorkerTaskResult(result: WorkerTaskResultRecord): Promise<void> {
+    const existing = this.#workerResults.get(result.taskId);
+    if (existing) {
+      this.#workerResults.delete(existing.taskId);
+    }
+    this.#workerResults.set(result.taskId, result);
+  }
+
+  async getWorkerTaskResult(taskId: string): Promise<WorkerTaskResultRecord | undefined> {
+    return this.#workerResults.get(taskId);
+  }
+
+  async listWorkerTaskResults(parentTaskId: string): Promise<WorkerTaskResultRecord[]> {
+    return [...this.#workerResults.values()].filter((result) => result.parentTaskId === parentTaskId);
+  }
+
+  async saveParentTaskSynthesis(synthesis: ParentTaskSynthesisRecord): Promise<void> {
+    this.#parentSyntheses.set(synthesis.parentTaskId, synthesis);
+  }
+
+  async getParentTaskSynthesis(parentTaskId: string): Promise<ParentTaskSynthesisRecord | undefined> {
+    return this.#parentSyntheses.get(parentTaskId);
   }
 }
 
@@ -230,6 +262,40 @@ async function waitUntil(assertion: () => void): Promise<void> {
   }
 
   throw lastError;
+}
+
+class FakeTaskResultCollector implements TaskResultCollector {
+  readonly calls: WorkerTaskResultCollectionContext[] = [];
+  results = new Map<string, WorkerTaskResultRecord>();
+
+  async collect(context: WorkerTaskResultCollectionContext): Promise<WorkerTaskResultRecord> {
+    this.calls.push(context);
+    return this.results.get(context.task.taskId) ?? {
+      resultId: `result-${context.task.taskId}`,
+      taskId: context.task.taskId,
+      parentTaskId: context.parentTask.taskId,
+      classification: "completed",
+      summary: `${context.task.taskId} done`,
+    };
+  }
+}
+
+class FakeParentTaskOutcomeSynthesizer implements ParentTaskOutcomeSynthesizer {
+  readonly calls: ParentTaskSynthesisContext[] = [];
+
+  async synthesize(context: ParentTaskSynthesisContext): Promise<ParentTaskSynthesisRecord> {
+    this.calls.push(context);
+    return {
+      synthesisId: `synthesis-${context.parentTask.taskId}`,
+      parentTaskId: context.parentTask.taskId,
+      classification: context.results.some((result) => result.classification === "failed")
+        ? "failed"
+        : "partial",
+      summary: `Synthesized ${context.results.length} results`,
+      childTaskCount: context.children.length,
+      resultIds: context.results.map((result) => result.resultId),
+    };
+  }
 }
 
 describe("CodexRunnerService", () => {
@@ -594,6 +660,46 @@ describe("CodexRunnerService", () => {
       },
       { taskId: "task-parent", type: "task.queued" },
     ]);
+  });
+
+  it("does not schedule a task graph parent as a worker", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+      },
+      children: [
+        {
+          taskId: "task-child",
+          prompt: "Do the work",
+        },
+      ],
+    });
+
+    expect(agentSession.started.map((session) => session.taskId)).toEqual(["task-child"]);
+    expect(worktreeManager.allocations.map((allocation) => allocation.taskId)).toEqual(["task-child"]);
+    const parentTask = await service.getTask("task-parent");
+    expect(parentTask).toMatchObject({
+      taskId: "task-parent",
+      state: "queued",
+    });
+    expect(parentTask).not.toHaveProperty("activeSessionId");
+    expect(parentTask).not.toHaveProperty("worktreePath");
   });
 
   it("rejects a task graph with duplicate task ids before persisting it", async () => {
@@ -1081,9 +1187,13 @@ describe("CodexRunnerService", () => {
       { taskId: "task-parent", type: "task.queued" },
       {
         taskId: "task-parent",
-        type: "task.started",
-        sessionId: "session-3",
-        worktreePath: "/repo/.plato/worktrees/task-parent",
+        type: "task.graph.result.collected",
+        parentTaskId: "task-parent",
+        childTaskId: "task-child-a",
+        resultId: "result-task-child-a",
+        resultClassification: "completed",
+        errorCode: undefined,
+        message: "Task task-child-a completed successfully.",
       },
       {
         taskId: "task-parent",
@@ -1094,17 +1204,21 @@ describe("CodexRunnerService", () => {
       },
       {
         taskId: "task-parent",
-        type: "task.completed",
-        sessionId: "session-3",
-        worktreePath: "/repo/.plato/worktrees/task-parent",
-        exitCode: 0,
+        type: "task.failed",
+        sessionId: undefined,
+        worktreePath: undefined,
+        errorCode: "TASK_GRAPH_CHILD_FAILED",
+        message: "Graph failed because child task task-child-b failed",
       },
       {
         taskId: "task-parent",
-        type: "task.failed",
-        worktreePath: "/repo/.plato/worktrees/task-parent",
-        errorCode: "TASK_GRAPH_CHILD_FAILED",
-        message: "Graph failed because child task task-child-b failed",
+        type: "task.graph.result.collected",
+        parentTaskId: "task-parent",
+        childTaskId: "task-child-b",
+        resultId: "result-task-child-b",
+        resultClassification: "failed",
+        errorCode: "TASK_EXIT_NON_ZERO",
+        message: "Task exited with code 1",
       },
       {
         taskId: "task-parent",
@@ -1112,6 +1226,14 @@ describe("CodexRunnerService", () => {
         parentTaskId: "task-parent",
         childTaskId: "task-child-b",
         graphState: "failed",
+      },
+      {
+        taskId: "task-parent",
+        type: "task.graph.synthesized",
+        parentTaskId: "task-parent",
+        synthesisId: "synthesis-task-parent",
+        resultClassification: "failed",
+        message: "Synthesized 2 child task results as failed. completed=1 partial=0 conflicted=0 failed=1",
       },
       {
         taskId: "task-parent",
@@ -1157,11 +1279,6 @@ describe("CodexRunnerService", () => {
 
     await agentSession.exit("session-1", 0);
     await agentSession.exit("session-2", 0);
-    await expect(service.getTaskGraph("task-parent")).resolves.toMatchObject({
-      state: "running",
-    });
-
-    await agentSession.exit("session-3", 0);
 
     await expect(service.getTaskGraph("task-parent")).resolves.toMatchObject({
       state: "completed",
@@ -1171,6 +1288,261 @@ describe("CodexRunnerService", () => {
       type: "task.graph.completed",
       parentTaskId: "task-parent",
       graphState: "completed",
+    });
+  });
+
+  it("collects durable child results and synthesizes the parent once every child is terminal", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const resultCollector = new FakeTaskResultCollector();
+    const synthesizer = new FakeParentTaskOutcomeSynthesizer();
+    resultCollector.results.set("task-child-a", {
+      resultId: "result-a",
+      taskId: "task-child-a",
+      parentTaskId: "task-parent",
+      classification: "partial",
+      summary: "API complete, tests pending",
+    });
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 2,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+      taskResultCollector: resultCollector,
+      parentTaskOutcomeSynthesizer: synthesizer,
+    });
+
+    await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+      },
+      children: [
+        {
+          taskId: "task-child-a",
+          prompt: "First child",
+        },
+        {
+          taskId: "task-child-b",
+          prompt: "Second child",
+        },
+      ],
+    });
+
+    await agentSession.exit("session-1", 0);
+
+    await expect(service.getTaskGraphResults("task-parent")).resolves.toEqual({
+      parentTaskId: "task-parent",
+      results: [
+        {
+          resultId: "result-a",
+          taskId: "task-child-a",
+          parentTaskId: "task-parent",
+          classification: "partial",
+          summary: "API complete, tests pending",
+        },
+      ],
+      synthesis: undefined,
+    });
+
+    await agentSession.exit("session-2", 1);
+
+    await expect(service.getTaskGraphResults("task-child-a")).resolves.toEqual({
+      parentTaskId: "task-parent",
+      results: [
+        {
+          resultId: "result-a",
+          taskId: "task-child-a",
+          parentTaskId: "task-parent",
+          classification: "partial",
+          summary: "API complete, tests pending",
+        },
+        {
+          resultId: "result-task-child-b",
+          taskId: "task-child-b",
+          parentTaskId: "task-parent",
+          classification: "failed",
+          summary: "Task exited with code 1",
+          errorCode: "TASK_EXIT_NON_ZERO",
+        },
+      ],
+      synthesis: {
+        synthesisId: "synthesis-task-parent",
+        parentTaskId: "task-parent",
+        classification: "failed",
+        summary: "Synthesized 2 results",
+        childTaskCount: 2,
+        resultIds: ["result-a", "result-task-child-b"],
+      },
+    });
+    expect(resultCollector.calls.map((call) => call.task.taskId)).toEqual(["task-child-a"]);
+    expect(synthesizer.calls).toHaveLength(1);
+    await expect(service.listEvents("task-parent")).resolves.toContainEqual({
+      taskId: "task-parent",
+      type: "task.graph.synthesized",
+      parentTaskId: "task-parent",
+      synthesisId: "synthesis-task-parent",
+      resultClassification: "failed",
+      message: "Synthesized 2 results",
+    });
+  });
+
+  it("synthesizes partial and conflicted child outputs when all workers succeed", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const resultCollector = new FakeTaskResultCollector();
+    const synthesizer = new FakeParentTaskOutcomeSynthesizer();
+    resultCollector.results.set("task-child-a", {
+      resultId: "result-a",
+      taskId: "task-child-a",
+      parentTaskId: "task-parent",
+      classification: "partial",
+      summary: "API complete, docs pending",
+    });
+    resultCollector.results.set("task-child-b", {
+      resultId: "result-b",
+      taskId: "task-child-b",
+      parentTaskId: "task-parent",
+      classification: "conflicted",
+      summary: "Both workers edited the same file",
+    });
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 2,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+      taskResultCollector: resultCollector,
+      parentTaskOutcomeSynthesizer: synthesizer,
+    });
+
+    await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+      },
+      children: [
+        {
+          taskId: "task-child-a",
+          prompt: "First child",
+        },
+        {
+          taskId: "task-child-b",
+          prompt: "Second child",
+        },
+      ],
+    });
+
+    await agentSession.exit("session-1", 0);
+    await agentSession.exit("session-2", 0);
+
+    await expect(service.getTaskGraphResults("task-parent")).resolves.toMatchObject({
+      parentTaskId: "task-parent",
+      results: [
+        {
+          resultId: "result-a",
+          classification: "partial",
+        },
+        {
+          resultId: "result-b",
+          classification: "conflicted",
+        },
+      ],
+      synthesis: {
+        synthesisId: "synthesis-task-parent",
+        parentTaskId: "task-parent",
+        classification: "partial",
+        summary: "Synthesized 2 results",
+        childTaskCount: 2,
+        resultIds: ["result-a", "result-b"],
+      },
+    });
+    expect(synthesizer.calls).toHaveLength(1);
+  });
+
+  it("reconciles missing graph results for already-terminal children", async () => {
+    const store = new InMemoryRunnerStore();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore: new InMemorySessionStore(),
+      logStreamer: new InMemoryLogStreamer(),
+      worktreeManager: new FakeWorktreeManager(),
+      maxConcurrentTasks: 0,
+    });
+
+    await store.saveTaskGraph(
+      [
+        {
+          taskId: "task-parent",
+          repoPath: "/repo",
+          prompt: "Coordinate",
+          priority: 0,
+          state: "queued",
+        },
+        {
+          taskId: "task-child-a",
+          repoPath: "/repo",
+          prompt: "Done",
+          priority: 0,
+          state: "completed",
+          decomposition: {
+            kind: "subtask",
+            parentTaskId: "task-parent",
+          },
+        },
+        {
+          taskId: "task-child-b",
+          repoPath: "/repo",
+          prompt: "Failed",
+          priority: 0,
+          state: "failed",
+          decomposition: {
+            kind: "subtask",
+            parentTaskId: "task-parent",
+          },
+        },
+      ],
+      [],
+    );
+
+    await expect(service.reconcileTaskGraphResults("task-parent")).resolves.toEqual({
+      parentTaskId: "task-parent",
+      results: [
+        {
+          resultId: "result-task-child-a",
+          taskId: "task-child-a",
+          parentTaskId: "task-parent",
+          classification: "completed",
+          summary: "Task task-child-a completed successfully.",
+        },
+        {
+          resultId: "result-task-child-b",
+          taskId: "task-child-b",
+          parentTaskId: "task-parent",
+          classification: "failed",
+          summary: "Recovered missing failed result for task task-child-b.",
+          errorCode: "TASK_RESULT_RECOVERED_FROM_FAILED_CHILD",
+        },
+      ],
+      synthesis: {
+        synthesisId: "synthesis-task-parent",
+        parentTaskId: "task-parent",
+        classification: "failed",
+        summary: "Synthesized 2 child task results as failed. completed=1 partial=0 conflicted=0 failed=1",
+        childTaskCount: 2,
+        resultIds: ["result-task-child-a", "result-task-child-b"],
+      },
     });
   });
 
@@ -1215,7 +1587,6 @@ describe("CodexRunnerService", () => {
 
     expect(agentSession.started.map((session) => session.taskId)).toEqual([
       "task-api",
-      "task-parent",
       "task-ui",
     ]);
     await expect(service.getTask("task-integration")).resolves.toMatchObject({
@@ -1233,11 +1604,10 @@ describe("CodexRunnerService", () => {
     await expect(service.getTask("task-integration")).resolves.toMatchObject({
       taskId: "task-integration",
       state: "running",
-      activeSessionId: "session-4",
+      activeSessionId: "session-3",
     });
     expect(agentSession.started.map((session) => session.taskId)).toEqual([
       "task-api",
-      "task-parent",
       "task-ui",
       "task-integration",
     ]);
@@ -1253,7 +1623,7 @@ describe("CodexRunnerService", () => {
       {
         taskId: "task-integration",
         type: "task.started",
-        sessionId: "session-4",
+        sessionId: "session-3",
         worktreePath: "/repo/.plato/worktrees/task-integration",
       },
       {
@@ -1261,7 +1631,7 @@ describe("CodexRunnerService", () => {
         type: "task.graph.worker.started",
         parentTaskId: "task-parent",
         dependencyTaskIds: ["task-api"],
-        sessionId: "session-4",
+        sessionId: "session-3",
         worktreePath: "/repo/.plato/worktrees/task-integration",
       },
     ]);
@@ -1306,7 +1676,7 @@ describe("CodexRunnerService", () => {
       ],
     });
 
-    await agentSession.exit("session-2", 1);
+    await agentSession.exit("session-1", 1);
 
     await expect(service.getTask("task-dependent")).resolves.toMatchObject({
       taskId: "task-dependent",
@@ -1324,7 +1694,6 @@ describe("CodexRunnerService", () => {
       activeSessionId: undefined,
     });
     expect(agentSession.started.map((session) => session.taskId)).toEqual([
-      "task-parent",
       "task-prereq",
     ]);
     await expect(service.listEvents("task-dependent")).resolves.toEqual([
@@ -1350,8 +1719,8 @@ describe("CodexRunnerService", () => {
     expect(parentEvents).toContainEqual({
       taskId: "task-parent",
       type: "task.failed",
-      sessionId: "session-1",
-      worktreePath: "/repo/.plato/worktrees/task-parent",
+      sessionId: undefined,
+      worktreePath: undefined,
       errorCode: "TASK_GRAPH_CHILD_FAILED",
       message: "Graph failed because child task task-dependent failed",
     });

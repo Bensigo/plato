@@ -4,10 +4,13 @@ import type {
   ContextArtifact,
   ContextPackageRecord,
   ContextSource,
+  ParentTaskSynthesisRecord,
   RunnerStore,
   RunnerTaskDecomposition,
   RunnerTaskRecord,
   RunnerTaskState,
+  WorkerTaskResultClassification,
+  WorkerTaskResultRecord,
 } from "../contracts.js";
 
 interface RunnerTaskRow {
@@ -32,6 +35,26 @@ interface ContextPackageRow {
   summary: string | null;
   sources_json: string;
   artifacts_json: string;
+}
+
+interface WorkerTaskResultRow {
+  result_id: string;
+  task_id: string;
+  parent_task_id: string;
+  classification: WorkerTaskResultClassification;
+  summary: string;
+  error_code: string | null;
+  metadata_json: string | null;
+}
+
+interface ParentTaskSynthesisRow {
+  synthesis_id: string;
+  parent_task_id: string;
+  classification: WorkerTaskResultClassification;
+  summary: string;
+  child_task_count: number;
+  result_ids_json: string;
+  metadata_json: string | null;
 }
 
 export class SqliteRunnerStore implements RunnerStore {
@@ -304,6 +327,134 @@ export class SqliteRunnerStore implements RunnerStore {
       artifacts: JSON.parse(row.artifacts_json) as ContextArtifact[],
     };
   }
+
+  async saveWorkerTaskResult(result: WorkerTaskResultRecord): Promise<void> {
+    this.#connection
+      .prepare(`
+        INSERT INTO runner_worker_task_results (
+          result_id,
+          task_id,
+          parent_task_id,
+          classification,
+          summary,
+          error_code,
+          metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(task_id) DO UPDATE SET
+          result_id = excluded.result_id,
+          parent_task_id = excluded.parent_task_id,
+          classification = excluded.classification,
+          summary = excluded.summary,
+          error_code = excluded.error_code,
+          metadata_json = excluded.metadata_json,
+          updated_at = CURRENT_TIMESTAMP
+      `)
+      .run(
+        result.resultId,
+        result.taskId,
+        result.parentTaskId,
+        result.classification,
+        result.summary,
+        result.errorCode ?? null,
+        result.metadata ? JSON.stringify(result.metadata) : null,
+      );
+  }
+
+  async getWorkerTaskResult(taskId: string): Promise<WorkerTaskResultRecord | undefined> {
+    const row = this.#connection
+      .prepare(
+        `
+          SELECT
+            result_id,
+            task_id,
+            parent_task_id,
+            classification,
+            summary,
+            error_code,
+            metadata_json
+          FROM runner_worker_task_results
+          WHERE task_id = ?
+        `,
+      )
+      .get(taskId) as WorkerTaskResultRow | undefined;
+
+    return row ? mapWorkerTaskResultRow(row) : undefined;
+  }
+
+  async listWorkerTaskResults(parentTaskId: string): Promise<WorkerTaskResultRecord[]> {
+    const rows = this.#connection
+      .prepare(
+        `
+          SELECT
+            result_id,
+            task_id,
+            parent_task_id,
+            classification,
+            summary,
+            error_code,
+            metadata_json
+          FROM runner_worker_task_results
+          WHERE parent_task_id = ?
+          ORDER BY rowid ASC
+        `,
+      )
+      .all(parentTaskId) as unknown as WorkerTaskResultRow[];
+
+    return rows.map(mapWorkerTaskResultRow);
+  }
+
+  async saveParentTaskSynthesis(synthesis: ParentTaskSynthesisRecord): Promise<void> {
+    this.#connection
+      .prepare(`
+        INSERT INTO runner_parent_task_syntheses (
+          synthesis_id,
+          parent_task_id,
+          classification,
+          summary,
+          child_task_count,
+          result_ids_json,
+          metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(parent_task_id) DO UPDATE SET
+          synthesis_id = excluded.synthesis_id,
+          classification = excluded.classification,
+          summary = excluded.summary,
+          child_task_count = excluded.child_task_count,
+          result_ids_json = excluded.result_ids_json,
+          metadata_json = excluded.metadata_json,
+          updated_at = CURRENT_TIMESTAMP
+      `)
+      .run(
+        synthesis.synthesisId,
+        synthesis.parentTaskId,
+        synthesis.classification,
+        synthesis.summary,
+        synthesis.childTaskCount,
+        JSON.stringify(synthesis.resultIds),
+        synthesis.metadata ? JSON.stringify(synthesis.metadata) : null,
+      );
+  }
+
+  async getParentTaskSynthesis(parentTaskId: string): Promise<ParentTaskSynthesisRecord | undefined> {
+    const row = this.#connection
+      .prepare(
+        `
+          SELECT
+            synthesis_id,
+            parent_task_id,
+            classification,
+            summary,
+            child_task_count,
+            result_ids_json,
+            metadata_json
+          FROM runner_parent_task_syntheses
+          WHERE parent_task_id = ?
+        `,
+      )
+      .get(parentTaskId) as ParentTaskSynthesisRow | undefined;
+
+    return row ? mapParentTaskSynthesisRow(row) : undefined;
+  }
 }
 
 function mapRunnerTaskRow(row: RunnerTaskRow): RunnerTaskRecord {
@@ -341,5 +492,29 @@ function mapRunnerTaskRow(row: RunnerTaskRow): RunnerTaskRecord {
           },
         }
       : {}),
+  };
+}
+
+function mapWorkerTaskResultRow(row: WorkerTaskResultRow): WorkerTaskResultRecord {
+  return {
+    resultId: row.result_id,
+    taskId: row.task_id,
+    parentTaskId: row.parent_task_id,
+    classification: row.classification,
+    summary: row.summary,
+    errorCode: row.error_code ?? undefined,
+    metadata: row.metadata_json ? JSON.parse(row.metadata_json) as Record<string, unknown> : undefined,
+  };
+}
+
+function mapParentTaskSynthesisRow(row: ParentTaskSynthesisRow): ParentTaskSynthesisRecord {
+  return {
+    synthesisId: row.synthesis_id,
+    parentTaskId: row.parent_task_id,
+    classification: row.classification,
+    summary: row.summary,
+    childTaskCount: row.child_task_count,
+    resultIds: JSON.parse(row.result_ids_json) as string[],
+    metadata: row.metadata_json ? JSON.parse(row.metadata_json) as Record<string, unknown> : undefined,
   };
 }

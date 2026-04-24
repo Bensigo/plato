@@ -8,6 +8,7 @@ import type {
   RequestTaskApprovalInput,
   RunnerStore,
   RunnerTaskGraphSnapshot,
+  RunnerTaskGraphResultSnapshot,
   RunnerTaskGraphState,
   RunnerSessionRecord,
   RunnerTaskStatusSnapshot,
@@ -15,8 +16,11 @@ import type {
   RunnerTaskState,
   SessionStore,
   StartTaskInput,
+  ParentTaskOutcomeSynthesizer,
+  TaskResultCollector,
   TaskResultVerifier,
   TaskVerificationResult,
+  WorkerTaskResultRecord,
   WorktreeAllocation,
   WorktreeManager,
 } from "./contracts.js";
@@ -31,6 +35,8 @@ export interface CodexRunnerServiceDeps {
   agentSessionFactory?: AgentSessionFactory;
   runtimeManager?: CodexRuntimeManager;
   taskResultVerifier?: TaskResultVerifier;
+  taskResultCollector?: TaskResultCollector;
+  parentTaskOutcomeSynthesizer?: ParentTaskOutcomeSynthesizer;
   maxConcurrentTasks?: number;
 }
 
@@ -42,6 +48,8 @@ export class CodexRunnerService {
   readonly #agentSession: AgentSession;
   readonly #runtimeManager?: CodexRuntimeManager;
   readonly #taskResultVerifier?: TaskResultVerifier;
+  readonly #taskResultCollector: TaskResultCollector;
+  readonly #parentTaskOutcomeSynthesizer: ParentTaskOutcomeSynthesizer;
   readonly #maxConcurrentTasks: number;
   #scheduleInFlight?: Promise<void>;
   #scheduleAgain = false;
@@ -55,6 +63,9 @@ export class CodexRunnerService {
     this.#agentSession = sessionFactory.create(deps.logStreamer);
     this.#runtimeManager = deps.runtimeManager;
     this.#taskResultVerifier = deps.taskResultVerifier;
+    this.#taskResultCollector = deps.taskResultCollector ?? new DefaultTaskResultCollector();
+    this.#parentTaskOutcomeSynthesizer =
+      deps.parentTaskOutcomeSynthesizer ?? new DefaultParentTaskOutcomeSynthesizer();
     this.#maxConcurrentTasks = deps.maxConcurrentTasks ?? 1;
   }
 
@@ -291,7 +302,10 @@ export class CodexRunnerService {
       message: reason,
     });
     await this.#failQueuedDependents(failedTask);
-    await this.#emitGraphLifecycleForTask(failedTask);
+    await this.#emitGraphLifecycleForTask(failedTask, {
+      errorCode: "TASK_APPROVAL_REJECTED",
+      message: reason,
+    });
     await this.#scheduleQueuedTasks();
 
     return failedTask;
@@ -371,6 +385,37 @@ export class CodexRunnerService {
       children,
       state: getGraphState(parentTask, children),
     };
+  }
+
+  async getTaskGraphResults(taskId: string): Promise<RunnerTaskGraphResultSnapshot | undefined> {
+    const parentTask = await this.#resolveGraphParentTask(taskId);
+    return parentTask ? this.#getTaskGraphResults(parentTask.taskId) : undefined;
+  }
+
+  async reconcileTaskGraphResults(taskId: string): Promise<RunnerTaskGraphResultSnapshot | undefined> {
+    const parentTask = await this.#resolveGraphParentTask(taskId);
+    if (!parentTask) {
+      return undefined;
+    }
+
+    const children = await this.#store.listChildTasks(parentTask.taskId);
+    for (const child of children) {
+      if (child.state === "completed") {
+        await this.#ensureWorkerResult(child, parentTask, {});
+      }
+      if (child.state === "failed") {
+        await this.#ensureWorkerResult(child, parentTask, {
+          errorCode: "TASK_RESULT_RECOVERED_FROM_FAILED_CHILD",
+          message: `Recovered missing failed result for task ${child.taskId}.`,
+        });
+      }
+    }
+
+    if (children.length > 0 && areAllChildrenTerminal(children)) {
+      await this.#ensureParentSynthesis(parentTask, children);
+    }
+
+    return this.#getTaskGraphResults(parentTask.taskId);
   }
 
   async getContextPackage(taskId: string) {
@@ -520,7 +565,10 @@ export class CodexRunnerService {
           message: error instanceof Error ? error.message : "Unknown Codex runtime failure",
         });
         await this.#failQueuedDependents(failedTask);
-        await this.#emitGraphLifecycleForTask(failedTask);
+        await this.#emitGraphLifecycleForTask(failedTask, {
+          errorCode: error instanceof Error && "code" in error ? String(error.code) : "CODEX_RUNTIME_FAILED",
+          message: error instanceof Error ? error.message : "Unknown Codex runtime failure",
+        });
         continue;
       }
 
@@ -557,7 +605,10 @@ export class CodexRunnerService {
           message: provisioningError.message,
         });
         await this.#failQueuedDependents(failedTask);
-        await this.#emitGraphLifecycleForTask(failedTask);
+        await this.#emitGraphLifecycleForTask(failedTask, {
+          errorCode: provisioningError.code,
+          message: provisioningError.message,
+        });
         continue;
       }
 
@@ -907,7 +958,7 @@ export class CodexRunnerService {
       exitCode: session.exitCode,
     });
     await this.#emitDependencySatisfied(nextTask);
-    await this.#emitGraphLifecycleForTask(nextTask);
+    await this.#emitGraphLifecycleForTask(nextTask, { session });
   }
 
   async #persistFailedTask(
@@ -937,12 +988,15 @@ export class CodexRunnerService {
       message: failure.message,
     });
     await this.#failQueuedDependents(nextTask);
-    await this.#emitGraphLifecycleForTask(nextTask);
+    await this.#emitGraphLifecycleForTask(nextTask, failure);
   }
 
   async #filterRunnableTasks(tasks: RunnerTaskRecord[]): Promise<RunnerTaskRecord[]> {
     const runnableTasks: RunnerTaskRecord[] = [];
     for (const task of tasks) {
+      if (await this.#isGraphCoordinatorTask(task)) {
+        continue;
+      }
       if (await this.#isTaskRunnable(task)) {
         runnableTasks.push(task);
       }
@@ -960,6 +1014,14 @@ export class CodexRunnerService {
     }
 
     return true;
+  }
+
+  async #isGraphCoordinatorTask(task: RunnerTaskRecord): Promise<boolean> {
+    if (task.decomposition) {
+      return false;
+    }
+
+    return (await this.#store.listChildTasks(task.taskId)).length > 0;
   }
 
   async #failQueuedTasksWithFailedDependencies(): Promise<void> {
@@ -1019,7 +1081,10 @@ export class CodexRunnerService {
       errorCode: "TASK_GRAPH_DEPENDENCY_FAILED",
       message: `Blocked by failed graph dependency ${failedDependencyTaskIds.join(", ")}`,
     });
-    await this.#emitGraphLifecycleForTask(nextTask);
+    await this.#emitGraphLifecycleForTask(nextTask, {
+      errorCode: "TASK_GRAPH_DEPENDENCY_FAILED",
+      message: `Blocked by failed graph dependency ${failedDependencyTaskIds.join(", ")}`,
+    });
   }
 
   async #emitDependencySatisfied(task: RunnerTaskRecord): Promise<void> {
@@ -1053,7 +1118,14 @@ export class CodexRunnerService {
     });
   }
 
-  async #emitGraphLifecycleForTask(task: RunnerTaskRecord): Promise<void> {
+  async #emitGraphLifecycleForTask(
+    task: RunnerTaskRecord,
+    terminalContext: {
+      session?: RunnerSessionRecord;
+      errorCode?: string;
+      message?: string;
+    } = {},
+  ): Promise<void> {
     const parentTaskId = task.decomposition?.parentTaskId;
     if (!parentTaskId) {
       const children = await this.#store.listChildTasks(task.taskId);
@@ -1075,6 +1147,8 @@ export class CodexRunnerService {
       parent = await this.#propagateGraphFailureToParent(parent, task);
     }
 
+    await this.#ensureWorkerResult(task, parent, terminalContext);
+
     const children = await this.#store.listChildTasks(parentTaskId);
     const graphState = getGraphState(parent, children);
     await this.#logStreamer.append({
@@ -1085,6 +1159,9 @@ export class CodexRunnerService {
       graphState,
     });
 
+    if (areAllChildrenTerminal(children)) {
+      await this.#ensureParentSynthesis(parent, children);
+    }
     await this.#emitGraphTerminalOnce(parentTaskId, graphState);
   }
 
@@ -1142,6 +1219,122 @@ export class CodexRunnerService {
     });
 
     return failedParent;
+  }
+
+  async #ensureWorkerResult(
+    task: RunnerTaskRecord,
+    parentTask: RunnerTaskRecord,
+    terminalContext: {
+      session?: RunnerSessionRecord;
+      errorCode?: string;
+      message?: string;
+    },
+  ): Promise<WorkerTaskResultRecord> {
+    const existing = await this.#store.getWorkerTaskResult(task.taskId);
+    if (existing) {
+      return existing;
+    }
+
+    const result = task.state === "completed"
+      ? await this.#collectCompletedWorkerResult(task, parentTask, terminalContext.session)
+      : buildFailedWorkerResult(task, parentTask, terminalContext);
+
+    await this.#store.saveWorkerTaskResult(result);
+    await this.#logStreamer.append({
+      taskId: parentTask.taskId,
+      type: "task.graph.result.collected",
+      parentTaskId: parentTask.taskId,
+      childTaskId: task.taskId,
+      resultId: result.resultId,
+      resultClassification: result.classification,
+      errorCode: result.errorCode,
+      message: result.summary,
+    });
+
+    return result;
+  }
+
+  async #collectCompletedWorkerResult(
+    task: RunnerTaskRecord,
+    parentTask: RunnerTaskRecord,
+    session?: RunnerSessionRecord,
+  ): Promise<WorkerTaskResultRecord> {
+    try {
+      const result = await this.#taskResultCollector.collect({
+        task,
+        parentTask,
+        session,
+      });
+
+      return {
+        ...result,
+        resultId: result.resultId || `result-${task.taskId}`,
+        taskId: task.taskId,
+        parentTaskId: parentTask.taskId,
+      };
+    } catch (error) {
+      return buildFailedWorkerResult(task, parentTask, {
+        errorCode: error instanceof Error && "code" in error
+          ? String(error.code)
+          : "TASK_RESULT_COLLECTION_FAILED",
+        message: error instanceof Error ? error.message : "Task result collection failed",
+      });
+    }
+  }
+
+  async #ensureParentSynthesis(
+    parentTask: RunnerTaskRecord,
+    children: RunnerTaskRecord[],
+  ): Promise<void> {
+    const existing = await this.#store.getParentTaskSynthesis(parentTask.taskId);
+    if (existing) {
+      return;
+    }
+
+    const results = await this.#store.listWorkerTaskResults(parentTask.taskId);
+    if (results.length !== children.length) {
+      return;
+    }
+
+    const synthesis = await this.#parentTaskOutcomeSynthesizer.synthesize({
+      parentTask,
+      children,
+      results,
+    });
+    const normalizedSynthesis = {
+      ...synthesis,
+      synthesisId: synthesis.synthesisId || `synthesis-${parentTask.taskId}`,
+      parentTaskId: parentTask.taskId,
+      childTaskCount: children.length,
+      resultIds: results.map((result) => result.resultId),
+    };
+
+    await this.#store.saveParentTaskSynthesis(normalizedSynthesis);
+    await this.#logStreamer.append({
+      taskId: parentTask.taskId,
+      type: "task.graph.synthesized",
+      parentTaskId: parentTask.taskId,
+      synthesisId: normalizedSynthesis.synthesisId,
+      resultClassification: normalizedSynthesis.classification,
+      message: normalizedSynthesis.summary,
+    });
+  }
+
+  async #resolveGraphParentTask(taskId: string): Promise<RunnerTaskRecord | undefined> {
+    const task = await this.#store.getTask(taskId);
+    if (!task) {
+      return undefined;
+    }
+
+    return task.decomposition ? this.#store.getTask(task.decomposition.parentTaskId) : task;
+  }
+
+  async #getTaskGraphResults(parentTaskId: string): Promise<RunnerTaskGraphResultSnapshot> {
+    return {
+      parentTaskId,
+      results: await this.#store.listWorkerTaskResults(parentTaskId),
+      synthesis: await this.#store.getParentTaskSynthesis(parentTaskId),
+    };
   }
 
   async #hasCapacity(): Promise<boolean> {
@@ -1238,8 +1431,107 @@ function getTaskDependencyIds(task: RunnerTaskRecord): string[] {
   return task.decomposition?.dependencyTaskIds ?? [];
 }
 
+class DefaultTaskResultCollector implements TaskResultCollector {
+  async collect({
+    task,
+    parentTask,
+  }: {
+    task: RunnerTaskRecord;
+    parentTask: RunnerTaskRecord;
+  }): Promise<WorkerTaskResultRecord> {
+    return {
+      resultId: `result-${task.taskId}`,
+      taskId: task.taskId,
+      parentTaskId: parentTask.taskId,
+      classification: "completed",
+      summary: `Task ${task.taskId} completed successfully.`,
+    };
+  }
+}
+
+class DefaultParentTaskOutcomeSynthesizer implements ParentTaskOutcomeSynthesizer {
+  async synthesize({
+    parentTask,
+    children,
+    results,
+  }: {
+    parentTask: RunnerTaskRecord;
+    children: RunnerTaskRecord[];
+    results: WorkerTaskResultRecord[];
+  }) {
+    const classification = classifyParentOutcome(results);
+    return {
+      synthesisId: `synthesis-${parentTask.taskId}`,
+      parentTaskId: parentTask.taskId,
+      classification,
+      summary: buildParentSynthesisSummary(classification, children.length, results),
+      childTaskCount: children.length,
+      resultIds: results.map((result) => result.resultId),
+    };
+  }
+}
+
+function buildFailedWorkerResult(
+  task: RunnerTaskRecord,
+  parentTask: RunnerTaskRecord,
+  failure: {
+    errorCode?: string;
+    message?: string;
+  },
+): WorkerTaskResultRecord {
+  return {
+    resultId: `result-${task.taskId}`,
+    taskId: task.taskId,
+    parentTaskId: parentTask.taskId,
+    classification: "failed",
+    summary: failure.message ?? `Task ${task.taskId} did not complete successfully.`,
+    errorCode: failure.errorCode ?? "TASK_FAILED",
+  };
+}
+
+function classifyParentOutcome(results: WorkerTaskResultRecord[]): WorkerTaskResultRecord["classification"] {
+  if (results.some((result) => result.classification === "failed")) {
+    return "failed";
+  }
+  if (results.some((result) => result.classification === "conflicted")) {
+    return "conflicted";
+  }
+  if (results.some((result) => result.classification === "partial")) {
+    return "partial";
+  }
+
+  return "completed";
+}
+
+function buildParentSynthesisSummary(
+  classification: WorkerTaskResultRecord["classification"],
+  childTaskCount: number,
+  results: WorkerTaskResultRecord[],
+): string {
+  const counts = results.reduce<Record<WorkerTaskResultRecord["classification"], number>>(
+    (current, result) => ({
+      ...current,
+      [result.classification]: current[result.classification] + 1,
+    }),
+    {
+      completed: 0,
+      partial: 0,
+      conflicted: 0,
+      failed: 0,
+    },
+  );
+
+  return [
+    `Synthesized ${childTaskCount} child task result${childTaskCount === 1 ? "" : "s"} as ${classification}.`,
+    `completed=${counts.completed}`,
+    `partial=${counts.partial}`,
+    `conflicted=${counts.conflicted}`,
+    `failed=${counts.failed}`,
+  ].join(" ");
+}
+
 function getGraphState(parent: RunnerTaskRecord, children: RunnerTaskRecord[]): RunnerTaskGraphState {
-  const tasks = [parent, ...children];
+  const tasks = children.length > 0 ? children : [parent];
   if (tasks.some((task) => task.state === "failed")) {
     return "failed";
   }
@@ -1257,4 +1549,8 @@ function getGraphState(parent: RunnerTaskRecord, children: RunnerTaskRecord[]): 
   }
 
   return "queued";
+}
+
+function areAllChildrenTerminal(children: RunnerTaskRecord[]): boolean {
+  return children.length > 0 && children.every((child) => child.state === "completed" || child.state === "failed");
 }
