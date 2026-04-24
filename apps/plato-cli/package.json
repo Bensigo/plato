@@ -10,6 +10,9 @@
       "default": "./dist/src/index.js"
     }
   },
+  "bin": {
+    "plato": "./dist/src/cli.js"
+  },
   "main": "./dist/src/index.js",
   "types": "./src/index.ts",
   "scripts": {
@@ -21,6 +24,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@plato/codex-runner": "workspace:*",
     "@plato/orchestration": "workspace:*",
     "zod": "^4.3.6"
   },
