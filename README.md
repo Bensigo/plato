@@ -12,8 +12,10 @@ The repo is split into user-facing applications in `apps/` and backend or infras
 │   └── desktop/          # User-facing desktop entrypoint
 ├── services/
 │   ├── codex-runner/     # Codex task execution and orchestration
+│   ├── config/           # Local Plato configuration and auth status
 │   ├── db/               # Database code, migrations, and clients
-│   └── github-server/    # GitHub-facing integrations
+│   ├── github-server/    # GitHub-facing integrations
+│   └── orchestration/    # Agent-agnostic task and graph contracts
 ├── package.json
 ├── pnpm-workspace.yaml
 ├── tsconfig.base.json
@@ -30,7 +32,8 @@ The repo is split into user-facing applications in `apps/` and backend or infras
 ## Workspace Snapshot
 
 - `apps/desktop` is the current desktop application entrypoint.
-- `services/codex-runner` is the current execution and orchestration service for Codex-powered work.
+- `services/orchestration` owns the agent-agnostic task, graph, event, and runtime contracts.
+- `services/codex-runner` is the current Codex execution backend behind those contracts.
 - `services/config` owns local Plato configuration and Codex auth status.
 - `services/db` is reserved for database-related code, migrations, and clients.
 - `services/github-server` is reserved for GitHub-facing integrations.
@@ -50,19 +53,21 @@ Plato is aiming to be the execution and orchestration layer a personal agent can
 
 ## Current Direction
 
-The current implementation is still closer to the foundation than the full multi-agent product. One active direction in the monorepo is reliable agent execution rather than one-off scripts. In practical terms, that means:
+The current implementation is still closer to the foundation than the full multi-agent product. One active direction in the monorepo is separating Plato's orchestration model from any single agent backend while keeping reliable agent execution rather than one-off scripts. In practical terms, that means:
 
 - tasks should move through explicit lifecycle states
+- product-facing task contracts should stay agent-agnostic
 - work should happen in isolated git worktrees
 - session output should be captured as durable events
 - interrupted work should stay recoverable instead of being discarded
 
-Those ideas are currently most concrete in `services/codex-runner`, which is the beginning of the orchestration substrate Plato will need before task decomposition and multi-agent coordination can be layered on top.
+Those ideas are currently split between `services/orchestration`, which defines the neutral product boundary, and `services/codex-runner`, which provides the first concrete execution backend.
 
 ## Current Status
 
-Today, Plato most concretely provides the execution backbone for that future system:
+Today, Plato most concretely provides the execution backbone and first agent-agnostic boundary for that future system:
 
+- neutral orchestration contracts for tasks, graphs, events, and agent runtimes
 - queueing and lifecycle management for Codex-backed tasks
 - isolated git worktrees per task
 - runtime readiness checks and bootstrap
@@ -70,7 +75,7 @@ Today, Plato most concretely provides the execution backbone for that future sys
 - durable task/session state
 - structured event capture for inspection and recovery
 
-That means the repo already has the beginnings of a trustworthy execution layer, but it does not yet fully implement the decomposition and multi-agent orchestration product vision.
+That means the repo already has the beginnings of a trustworthy execution layer and a clean place for future agent adapters, but it does not yet expose the full MCP product surface.
 
 ## Getting Started
 

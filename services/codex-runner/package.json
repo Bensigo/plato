@@ -21,6 +21,7 @@
   "dependencies": {
     "@plato/db": "workspace:*",
     "@plato/config": "workspace:*",
+    "@plato/orchestration": "workspace:*",
     "@openai/codex-sdk": "^0.123.0"
   }
 }

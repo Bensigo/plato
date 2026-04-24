@@ -2,6 +2,7 @@ export * from "./codex-runner-service.js";
 export * from "./cli.js";
 export * from "./contracts.js";
 export * from "./logs/file-log-streamer.js";
+export * from "./orchestration/codex-agent-runtime.js";
 export * from "./runtime/codex-runtime-manager.js";
 export * from "./session/codex-sdk-backed-agent-session.js";
 export * from "./store/sqlite-runner-persistence.js";

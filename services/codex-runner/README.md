@@ -2,9 +2,9 @@
 
 `@plato/codex-runner` is a service inside the Plato monorepo. It owns the lifecycle of Codex-backed execution from queueing through worktree setup, runtime checks, session start, interruption, resume, and event capture.
 
-This package is not the whole project and should not describe the whole monorepo. Its job is narrower: provide the service boundary that lets the rest of Plato ask for agent work in a predictable way and recover what happened later.
+This package is not the whole project and should not describe the whole monorepo. Its job is narrower: provide the Codex execution backend that lets Plato ask for agent work in a predictable way and recover what happened later.
 
-In the larger Plato product, this service is the execution substrate for a future multi-agent orchestration flow. Plato's end goal is to help personal agents such as Hermes or OpenClaw decompose larger tasks into smaller subtasks, spawn multiple worker agents in parallel, and coordinate their results into one final outcome. `codex-runner` is the durability and execution layer that makes that orchestration believable.
+In the larger Plato product, this service is one execution substrate for a future multi-agent orchestration flow. Plato's end goal is to help personal agents such as Hermes or OpenClaw decompose larger tasks into smaller subtasks, spawn multiple worker agents in parallel, and coordinate their results into one final outcome. Product-facing orchestration contracts live in `@plato/orchestration`; `codex-runner` adapts Codex-backed execution behind that neutral boundary.
 
 ## What The Service Owns
 
@@ -27,6 +27,7 @@ The current codebase already exercises a concrete slice of this design:
 - SQLite-backed task and session stores provide durable runner state through the shared `@plato/db` foundation.
 - File-backed log streaming still provides the ordered event trail used for inspection and recovery.
 - `@plato/config` provides local Codex auth configuration so real operator runs can pass user-provided OpenAI credentials into the Codex SDK.
+- `CodexRunnerAgentRuntime` adapts `CodexRunnerService` to the agent-agnostic `@plato/orchestration` runtime contract.
 
 ## Task Lifecycle
 
@@ -52,16 +53,22 @@ The runner treats logs as structured events first, text second. Current events i
 
 That event stream is the service's audit trail. Other parts of Plato should be able to reconstruct what happened to a task without scraping terminal text.
 
+## Orchestration Boundary
+
+`@plato/orchestration` owns neutral task, graph, event, result, and agent runtime contracts. MCP and other caller-facing surfaces should depend on that package instead of importing `CodexRunnerService` directly.
+
+`CodexRunnerAgentRuntime` is this package's adapter for that boundary. It maps Plato-level `workspacePath` and orchestration graph inputs to the runner's `repoPath` and task graph APIs, then maps runner records and events back to neutral orchestration records with `execution: { runtimeId, backend: "codex" }`.
+
 ## What Codex Runner Is Becoming
 
 The longer-term role of this workspace is to be one of Plato's core execution services for agent work:
 
-- a stable service contract for submitting and inspecting tasks
+- a stable Codex backend contract for submitting and inspecting tasks
 - strong isolation between tasks via git worktrees
 - resumable execution that preserves debugging context
 - adapters around side effects so scheduling and lifecycle rules remain unit-testable
 
-The next product step beyond the current foundation is not "more task execution" in the abstract. It is explicit support for parent tasks, child tasks, worker coordination, and result synthesis so Plato can evolve from a durable single-task runner into the orchestration core for a personal multi-agent system.
+The next product step beyond this package is not "more Codex surface" in the abstract. It is caller-facing orchestration over the neutral `@plato/orchestration` boundary so future agent backends can plug in without reshaping Plato's product model.
 
 ## Task Graphs
 
@@ -100,6 +107,7 @@ Recovery preserves the stored `worktreePath`, clears the stale active session po
 
 - Install dependencies from the repo root with `pnpm install`.
 - Run tests with `pnpm --filter @plato/codex-runner test`.
+- Run adapter tests with `pnpm --filter @plato/codex-runner test -- codex-agent-runtime.test.ts`.
 - Run type-checking with `pnpm --filter @plato/codex-runner typecheck`.
 
 Implementation rules for agents and contributors in this workspace live in [AGENTS.md](/Users/macbook/work/plato/services/codex-runner/AGENTS.md).
