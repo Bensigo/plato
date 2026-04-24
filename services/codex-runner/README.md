@@ -68,6 +68,8 @@ The next product step beyond the current foundation is not "more task execution"
 
 Operators can inspect graph state with `getTaskGraph(taskId)` or `codex-runner graph status <taskId>`. Passing either a parent id or child id returns the parent, immediate children, dependencies, and aggregate graph state. Parent-scoped graph lifecycle events are emitted when the graph is created and when child tasks complete or fail. Worker/dependency events are emitted on child task streams when a dependency is satisfied, when a worker starts, or when a failed prerequisite blocks a dependent worker.
 
+The CLI accepts `--max-concurrent-tasks <n>` on `start` and `graph start` to tune how many runner tasks may be active at once for that operator runtime.
+
 As the service grows, keep the domain language centered on `task`, `session`, `worktree`, `interrupt`, and `resume`. Those concepts are already the backbone of the implementation and should stay visible in the public API.
 
 ## Startup Recovery

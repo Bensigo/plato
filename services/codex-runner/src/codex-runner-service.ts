@@ -43,6 +43,8 @@ export class CodexRunnerService {
   readonly #runtimeManager?: CodexRuntimeManager;
   readonly #taskResultVerifier?: TaskResultVerifier;
   readonly #maxConcurrentTasks: number;
+  #scheduleInFlight?: Promise<void>;
+  #scheduleAgain = false;
 
   constructor(deps: CodexRunnerServiceDeps) {
     this.#store = deps.store;
@@ -468,6 +470,25 @@ export class CodexRunnerService {
   }
 
   async #scheduleQueuedTasks(): Promise<void> {
+    if (this.#scheduleInFlight) {
+      this.#scheduleAgain = true;
+      await this.#scheduleInFlight;
+      return;
+    }
+
+    this.#scheduleInFlight = this.#runScheduleLoop();
+    try {
+      await this.#scheduleInFlight;
+    } finally {
+      this.#scheduleInFlight = undefined;
+      if (this.#scheduleAgain) {
+        this.#scheduleAgain = false;
+        await this.#scheduleQueuedTasks();
+      }
+    }
+  }
+
+  async #runScheduleLoop(): Promise<void> {
     while (await this.#hasCapacity()) {
       await this.#failQueuedTasksWithFailedDependencies();
       const queuedTasks = await this.#store.listTasksByState("queued");
@@ -1045,9 +1066,13 @@ export class CodexRunnerService {
       return;
     }
 
-    const parent = await this.#store.getTask(parentTaskId);
+    let parent = await this.#store.getTask(parentTaskId);
     if (!parent) {
       return;
+    }
+
+    if (task.state === "failed") {
+      parent = await this.#propagateGraphFailureToParent(parent, task);
     }
 
     const children = await this.#store.listChildTasks(parentTaskId);
@@ -1086,6 +1111,37 @@ export class CodexRunnerService {
       parentTaskId,
       graphState,
     });
+  }
+
+  async #propagateGraphFailureToParent(
+    parent: RunnerTaskRecord,
+    failedChild: RunnerTaskRecord,
+  ): Promise<RunnerTaskRecord> {
+    if (parent.state === "failed") {
+      return parent;
+    }
+
+    const failedParent: RunnerTaskRecord = {
+      ...parent,
+      state: "failed",
+      activeSessionId: undefined,
+    };
+
+    await this.#store.saveTask(failedParent);
+    await this.#saveSessionCheckpoint(parent, {
+      state: "failed",
+      exitCode: null,
+    });
+    await this.#logStreamer.append({
+      taskId: parent.taskId,
+      type: "task.failed",
+      sessionId: parent.activeSessionId,
+      worktreePath: parent.worktreePath,
+      errorCode: "TASK_GRAPH_CHILD_FAILED",
+      message: `Graph failed because child task ${failedChild.taskId} failed`,
+    });
+
+    return failedParent;
   }
 
   async #hasCapacity(): Promise<boolean> {

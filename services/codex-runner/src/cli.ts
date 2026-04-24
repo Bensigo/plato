@@ -49,6 +49,7 @@ export interface OperatorRuntimeOptions {
   dbPath?: string;
   logPath?: string;
   cwd?: string;
+  maxConcurrentTasks?: number;
 }
 
 export interface RunCodexRunnerCliOptions {
@@ -125,6 +126,7 @@ async function handleGraphStart(
       prompt: { type: "string" },
       priority: { type: "string" },
       child: { type: "string", multiple: true },
+      "max-concurrent-tasks": { type: "string" },
       "db-path": { type: "string" },
       "log-path": { type: "string" },
     },
@@ -139,6 +141,7 @@ async function handleGraphStart(
     cwd: options.cwd,
     dbPath: parsed.values["db-path"],
     logPath: parsed.values["log-path"],
+    maxConcurrentTasks: parseOptionalInteger(parsed.values["max-concurrent-tasks"], "max concurrent tasks"),
   });
 
   if (!runtime) {
@@ -210,6 +213,7 @@ export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}):
     worktreeManager: new GitWorktreeManager(),
     logStreamer: new FileLogStreamer(storagePaths.logPath),
     runtimeManager: new DefaultCodexRuntimeManager(),
+    maxConcurrentTasks: options.maxConcurrentTasks,
   });
 
   return {
@@ -232,6 +236,7 @@ async function handleStart(
       "repo-path": { type: "string" },
       prompt: { type: "string" },
       priority: { type: "string" },
+      "max-concurrent-tasks": { type: "string" },
       "db-path": { type: "string" },
       "log-path": { type: "string" },
     },
@@ -245,6 +250,7 @@ async function handleStart(
     cwd: options.cwd,
     dbPath: parsed.values["db-path"],
     logPath: parsed.values["log-path"],
+    maxConcurrentTasks: parseOptionalInteger(parsed.values["max-concurrent-tasks"], "max concurrent tasks"),
   });
 
   if (!runtime) {
@@ -557,9 +563,9 @@ function buildHelpText(): string {
     "codex-runner <command>",
     "",
     "Commands:",
-    "  start --prompt <text> [--task-id <id>] [--repo-path <path>] [--priority <n>]",
+    "  start --prompt <text> [--task-id <id>] [--repo-path <path>] [--priority <n>] [--max-concurrent-tasks <n>]",
     "  status [taskId] [--state <state>]",
-    "  graph start --prompt <text> --child <json|taskId:prompt[:priority]> [--child ...]",
+    "  graph start --prompt <text> --child <json|taskId:prompt[:priority]> [--child ...] [--max-concurrent-tasks <n>]",
     "  graph status <taskId>",
     "  events <taskId>",
     "  interrupt <taskId>",
