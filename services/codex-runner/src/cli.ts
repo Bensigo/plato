@@ -17,6 +17,10 @@ import type {
   SessionEvent,
 } from "./contracts.js";
 import { CodexRunnerService } from "./codex-runner-service.js";
+import {
+  CodexAppServerAuthClient,
+  type ChatGptLoginStarted,
+} from "./auth/codex-app-server-auth-client.js";
 import { FileLogStreamer } from "./logs/file-log-streamer.js";
 import { DefaultCodexRuntimeManager } from "./runtime/codex-runtime-manager.js";
 import { CodexSdkBackedAgentSessionFactory } from "./session/codex-sdk-backed-agent-session.js";
@@ -67,6 +71,26 @@ export interface RunCodexRunnerCliOptions {
   stdout?: Writer;
   stderr?: Writer;
   openRuntime?: (options: OperatorRuntimeOptions) => Promise<OperatorRuntime> | OperatorRuntime;
+  openCodexAuthClient?: (options: CodexAuthClientOptions) => CodexAuthClient;
+}
+
+export interface CodexAuthClientOptions {
+  codexPath?: string;
+}
+
+export interface CodexAuthClient {
+  startChatGptOAuthLogin(options: {
+    mode?: "browser" | "device_code";
+    timeoutMs?: number;
+    onLoginStarted?: (started: ChatGptLoginStarted) => void;
+  }): Promise<{
+    account: {
+      authMode: "apikey" | "chatgpt" | null;
+      email?: string;
+      planType?: string;
+    };
+  }>;
+  close(): void;
 }
 
 export async function runCodexRunnerCli(
@@ -99,7 +123,14 @@ export async function runCodexRunnerCli(
       case "resume":
         return await handleResume(rest, { cwd, stdout, openRuntime });
       case "config":
-        return await handleConfig(rest, { cwd, stdin: options.stdin, stdout });
+        return await handleConfig(rest, {
+          cwd,
+          stdin: options.stdin,
+          stdout,
+          openCodexAuthClient:
+            options.openCodexAuthClient ??
+            ((authOptions) => new CodexAppServerAuthClient({ codexPath: authOptions.codexPath })),
+        });
       default:
         stderr.write(`Unknown command: ${command}\n\n${buildHelpText()}\n`);
         return 1;
@@ -112,7 +143,7 @@ export async function runCodexRunnerCli(
 
 async function handleConfig(
   argv: string[],
-  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdin" | "stdout">,
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdin" | "stdout" | "openCodexAuthClient">,
 ): Promise<number> {
   const [subcommand, ...rest] = argv;
   switch (subcommand) {
@@ -123,9 +154,60 @@ async function handleConfig(
     case "clear-openai-key":
       return handleConfigClearOpenAIKey(rest, options);
     case "auth-chatgpt":
-      throw new Error("ChatGPT OAuth is not implemented yet; use config set-openai-key for Milestone 21");
+      return handleConfigAuthChatGpt(rest, options);
     default:
       throw new Error("config requires a subcommand: status, set-openai-key, clear-openai-key, or auth-chatgpt");
+  }
+}
+
+async function handleConfigAuthChatGpt(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout" | "openCodexAuthClient">,
+): Promise<number> {
+  const parsed = parseArgs({
+    args: argv,
+    allowPositionals: false,
+    options: {
+      "config-path": { type: "string" },
+      "secrets-path": { type: "string" },
+      "codex-path": { type: "string" },
+      "device-code": { type: "boolean", default: false },
+      "timeout-ms": { type: "string" },
+    },
+  });
+  const stdout = options.stdout ?? process.stdout;
+  const authClient = options.openCodexAuthClient?.({
+    codexPath: resolveOptionalPath(options.cwd, parsed.values["codex-path"]),
+  });
+  if (!authClient) {
+    throw new Error("Codex auth client was not created");
+  }
+
+  try {
+    const result = await authClient.startChatGptOAuthLogin({
+      mode: parsed.values["device-code"] ? "device_code" : "browser",
+      timeoutMs: parseOptionalInteger(parsed.values["timeout-ms"], "timeout-ms"),
+      onLoginStarted: (started) => {
+        writeJson(stdout, {
+          event: "chatgpt_login_started",
+          login: started,
+        });
+      },
+    });
+    const service = createFileBackedPlatoConfigService({
+      configPath: resolveOptionalPath(options.cwd, parsed.values["config-path"]),
+      secretsPath: resolveOptionalPath(options.cwd, parsed.values["secrets-path"]),
+    });
+    writeJson(
+      stdout,
+      await service.setChatGptOAuthAccount({
+        email: result.account.email,
+        planType: result.account.planType,
+      }),
+    );
+    return 0;
+  } finally {
+    authClient.close();
   }
 }
 
@@ -806,7 +888,7 @@ function buildHelpText(): string {
     "  config status",
     "  config set-openai-key (--api-key-stdin | --api-key-env <name> | --api-key <key>)",
     "  config clear-openai-key",
-    "  config auth-chatgpt",
+    "  config auth-chatgpt [--device-code] [--codex-path <path>]",
     "",
     "Storage:",
     "  --db-path <path>   Defaults to .plato/codex-runner/runner.sqlite",

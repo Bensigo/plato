@@ -79,10 +79,14 @@ Before running real Codex-backed tasks, operators can configure local Codex auth
 codex-runner config status
 printf '%s' "$OPENAI_API_KEY" | codex-runner config set-openai-key --api-key-stdin
 # or: codex-runner config set-openai-key --api-key-env OPENAI_API_KEY
+codex-runner config auth-chatgpt
+codex-runner config auth-chatgpt --device-code
 codex-runner config clear-openai-key
 ```
 
-Config defaults to `~/.plato/config.json`, with MVP local secret fallback storage at `~/.plato/secrets.json`. ChatGPT OAuth is an explicit future auth provider; for Milestone 21, OpenAI API key auth is the working path.
+Config defaults to `~/.plato/config.json`, with MVP local secret fallback storage at `~/.plato/secrets.json`. OpenAI API keys are stored in Plato's local secret fallback and passed to the Codex SDK as API-key auth.
+
+ChatGPT subscription auth follows the OpenClaw-style split route: `chatgpt_oauth` is distinct from `openai_api_key`, and the login flow is owned by Codex app-server. `auth-chatgpt` starts `codex app-server`, calls `account/login/start` with browser OAuth by default, or `chatgptDeviceCode` when `--device-code` is passed, then stores only safe account metadata in Plato config. Codex persists and refreshes the OAuth tokens in its own auth store.
 
 As the service grows, keep the domain language centered on `task`, `session`, `worktree`, `interrupt`, and `resume`. Those concepts are already the backbone of the implementation and should stay visible in the public API.
 

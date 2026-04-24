@@ -90,4 +90,48 @@ describe("PlatoConfigService", () => {
 
     await expect(service.setOpenAIApiKey("   ")).rejects.toThrow("OpenAI API key cannot be empty");
   });
+
+  it("records ChatGPT OAuth as Codex-managed account metadata without secrets", async () => {
+    const tempDir = await createTempDir("plato-config-");
+    const service = createFileBackedPlatoConfigService({
+      configPath: `${tempDir}/config.json`,
+      secretsPath: `${tempDir}/secrets.json`,
+    });
+
+    await expect(
+      service.setChatGptOAuthAccount({
+        email: "user@example.com",
+        planType: "plus",
+        updatedAt: "2026-04-24T00:00:00.000Z",
+      }),
+    ).resolves.toEqual({
+      configPath: `${tempDir}/config.json`,
+      codexAuth: {
+        configured: true,
+        provider: "chatgpt_oauth",
+        chatGptOAuth: {
+          accountId: "user@example.com",
+          email: "user@example.com",
+          planType: "plus",
+          tokenSource: "codex_app_server",
+          updatedAt: "2026-04-24T00:00:00.000Z",
+          configured: true,
+        },
+      },
+    });
+    await expect(service.resolveCodexAuth()).resolves.toEqual({
+      provider: "chatgpt_oauth",
+      chatGptOAuth: {
+        accountId: "user@example.com",
+        email: "user@example.com",
+        planType: "plus",
+        tokenSource: "codex_app_server",
+        updatedAt: "2026-04-24T00:00:00.000Z",
+      },
+    });
+    await expect(readFile(`${tempDir}/config.json`, "utf8")).resolves.not.toContain("refresh");
+    await expect(readFile(`${tempDir}/secrets.json`, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 });
