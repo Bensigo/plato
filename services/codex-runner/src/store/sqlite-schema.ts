@@ -12,6 +12,7 @@ export function bootstrapCodexRunnerSchema(connection: DatabaseSync): void {
       active_session_id TEXT,
       decomposition_kind TEXT,
       parent_task_id TEXT,
+      dependency_task_ids_json TEXT,
       pending_approval_request_id TEXT,
       pending_approval_requested_action TEXT,
       pending_approval_reason TEXT,
@@ -72,6 +73,7 @@ export function bootstrapCodexRunnerSchema(connection: DatabaseSync): void {
   ensureColumn(connection, "runner_tasks", "pending_approval_request_id", "TEXT");
   ensureColumn(connection, "runner_tasks", "decomposition_kind", "TEXT");
   ensureColumn(connection, "runner_tasks", "parent_task_id", "TEXT");
+  ensureColumn(connection, "runner_tasks", "dependency_task_ids_json", "TEXT");
   ensureColumn(connection, "runner_tasks", "pending_approval_requested_action", "TEXT");
   ensureColumn(connection, "runner_tasks", "pending_approval_reason", "TEXT");
   ensureColumn(connection, "runner_tasks", "pending_approval_session_id", "TEXT");

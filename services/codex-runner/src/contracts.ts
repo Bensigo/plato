@@ -28,6 +28,20 @@ export interface StartTaskInput {
   contextPackage?: TaskContextPackageInput;
 }
 
+export interface CreateTaskGraphChildInput {
+  taskId: string;
+  repoPath?: string;
+  prompt: string;
+  priority?: number;
+  dependencyTaskIds?: string[];
+  contextPackage?: TaskContextPackageInput;
+}
+
+export interface CreateTaskGraphInput {
+  parent: StartTaskInput;
+  children: CreateTaskGraphChildInput[];
+}
+
 export interface PendingApprovalRecord {
   approvalRequestId: string;
   requestedAction: string;
@@ -47,6 +61,7 @@ export type RunnerTaskDecompositionKind = "subtask";
 export interface RunnerTaskDecomposition {
   kind: RunnerTaskDecompositionKind;
   parentTaskId: string;
+  dependencyTaskIds?: string[];
 }
 
 export type ContextSourceKind =
@@ -122,6 +137,20 @@ export interface RunnerTaskStatusSnapshot {
   sessions: RunnerSessionRecord[];
 }
 
+export type RunnerTaskGraphState =
+  | "queued"
+  | "running"
+  | "awaiting_approval"
+  | "interrupted"
+  | "completed"
+  | "failed";
+
+export interface RunnerTaskGraphSnapshot {
+  parent: RunnerTaskRecord;
+  children: RunnerTaskRecord[];
+  state: RunnerTaskGraphState;
+}
+
 export interface WorktreeAllocation {
   taskId: string;
   repoPath: string;
@@ -149,11 +178,19 @@ export interface SessionEvent {
     | "task.completed"
     | "task.resumed"
     | "task.reconciled"
+    | "task.graph.created"
+    | "task.graph.child.completed"
+    | "task.graph.child.failed"
+    | "task.graph.completed"
+    | "task.graph.failed"
     | "verification.started"
     | "verification.completed"
     | "verification.failed";
   sessionId?: string;
+  parentTaskId?: string;
+  childTaskId?: string;
   worktreePath?: string;
+  graphState?: RunnerTaskGraphState;
   recoveredState?: "interrupted" | "failed" | "completed";
   approvalRequestId?: string;
   requestedAction?: string;
@@ -186,6 +223,7 @@ export interface TaskResultVerifier {
 
 export interface RunnerStore {
   saveTask(task: RunnerTaskRecord): Promise<void>;
+  saveTaskGraph(tasks: RunnerTaskRecord[], contextPackages: ContextPackageRecord[]): Promise<void>;
   getTask(taskId: string): Promise<RunnerTaskRecord | undefined>;
   listTasks(): Promise<RunnerTaskRecord[]>;
   listTasksByState(state: RunnerTaskState): Promise<RunnerTaskRecord[]>;
