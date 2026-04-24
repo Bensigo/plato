@@ -92,6 +92,14 @@ describe("SqliteRunnerStore", () => {
           decomposition: {
             kind: "subtask",
             parentTaskId: "task-parent",
+            dependencyTaskIds: ["task-sibling"],
+          },
+        },
+        {
+          ...buildTask("task-sibling", "queued"),
+          decomposition: {
+            kind: "subtask",
+            parentTaskId: "task-parent",
           },
         },
       ],
@@ -109,9 +117,25 @@ describe("SqliteRunnerStore", () => {
         decomposition: {
           kind: "subtask",
           parentTaskId: "task-parent",
+          dependencyTaskIds: ["task-sibling"],
+        },
+      },
+      {
+        ...buildTask("task-sibling", "queued"),
+        decomposition: {
+          kind: "subtask",
+          parentTaskId: "task-parent",
         },
       },
     ]);
+    await expect(secondPersistence.store.getTask("task-child")).resolves.toEqual({
+      ...buildTask("task-child", "queued"),
+      decomposition: {
+        kind: "subtask",
+        parentTaskId: "task-parent",
+        dependencyTaskIds: ["task-sibling"],
+      },
+    });
     await expect(secondPersistence.store.getContextPackage("task-child")).resolves.toEqual(
       buildContextPackage("task-child"),
     );
@@ -163,6 +187,7 @@ describe("SqliteRunnerStore", () => {
       .prepare("PRAGMA table_info(runner_tasks)")
       .all() as Array<{ name: string }>;
     expect(columns.some((column) => column.name === "parent_task_id")).toBe(true);
+    expect(columns.some((column) => column.name === "dependency_task_ids_json")).toBe(true);
 
     const indexes = persistence.database.connection
       .prepare("PRAGMA index_list(runner_tasks)")

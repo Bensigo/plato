@@ -105,6 +105,9 @@ export class CodexRunnerService {
       decomposition: {
         kind: "subtask" as const,
         parentTaskId: parent.taskId,
+        ...((child.dependencyTaskIds?.length ?? 0) > 0
+          ? { dependencyTaskIds: child.dependencyTaskIds }
+          : {}),
       },
     }));
     const contextPackages: ContextPackageRecord[] = [
@@ -420,6 +423,32 @@ export class CodexRunnerService {
 
     if (input.children.length === 0) {
       throw new Error("Task graph requires at least one child task");
+    }
+
+    const childTaskIds = new Set(input.children.map((child) => child.taskId));
+    for (const child of input.children) {
+      const dependencyTaskIds = child.dependencyTaskIds ?? [];
+      const duplicateDependencyTaskId = findDuplicate(dependencyTaskIds);
+      if (duplicateDependencyTaskId) {
+        throw new Error(
+          `Task graph child ${child.taskId} contains duplicate dependency ${duplicateDependencyTaskId}`,
+        );
+      }
+
+      for (const dependencyTaskId of dependencyTaskIds) {
+        if (dependencyTaskId === child.taskId) {
+          throw new Error(`Task graph child ${child.taskId} cannot depend on itself`);
+        }
+        if (!childTaskIds.has(dependencyTaskId)) {
+          throw new Error(
+            `Task graph child ${child.taskId} depends on missing child task ${dependencyTaskId}`,
+          );
+        }
+      }
+    }
+    const cycle = findChildDependencyCycle(input.children);
+    if (cycle) {
+      throw new Error(`Task graph child dependencies contain a cycle: ${cycle.join(" -> ")}`);
     }
 
     for (const taskId of taskIds) {
@@ -882,6 +911,13 @@ export class CodexRunnerService {
   async #emitGraphLifecycleForTask(task: RunnerTaskRecord): Promise<void> {
     const parentTaskId = task.decomposition?.parentTaskId;
     if (!parentTaskId) {
+      const children = await this.#store.listChildTasks(task.taskId);
+      if (children.length === 0) {
+        return;
+      }
+
+      const graphState = getGraphState(task, children);
+      await this.#emitGraphTerminalOnce(task.taskId, graphState);
       return;
     }
 
@@ -900,14 +936,32 @@ export class CodexRunnerService {
       graphState,
     });
 
-    if (graphState === "completed" || graphState === "failed") {
-      await this.#logStreamer.append({
-        taskId: parentTaskId,
-        type: graphState === "completed" ? "task.graph.completed" : "task.graph.failed",
-        parentTaskId,
-        graphState,
-      });
+    await this.#emitGraphTerminalOnce(parentTaskId, graphState);
+  }
+
+  async #emitGraphTerminalOnce(
+    parentTaskId: string,
+    graphState: RunnerTaskGraphState,
+  ): Promise<void> {
+    if (graphState !== "completed" && graphState !== "failed") {
+      return;
     }
+
+    const existingEvents = await this.#logStreamer.list(parentTaskId);
+    if (
+      existingEvents.some(
+        (event) => event.type === "task.graph.completed" || event.type === "task.graph.failed",
+      )
+    ) {
+      return;
+    }
+
+    await this.#logStreamer.append({
+      taskId: parentTaskId,
+      type: graphState === "completed" ? "task.graph.completed" : "task.graph.failed",
+      parentTaskId,
+      graphState,
+    });
   }
 
   async #hasCapacity(): Promise<boolean> {
@@ -949,6 +1003,52 @@ function findDuplicate(values: string[]): string | undefined {
       return value;
     }
     seen.add(value);
+  }
+
+  return undefined;
+}
+
+function findChildDependencyCycle(
+  children: CreateTaskGraphInput["children"],
+): string[] | undefined {
+  const childById = new Map(children.map((child) => [child.taskId, child]));
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const path: string[] = [];
+
+  const visit = (taskId: string): string[] | undefined => {
+    if (visiting.has(taskId)) {
+      return [...path.slice(path.indexOf(taskId)), taskId];
+    }
+    if (visited.has(taskId)) {
+      return undefined;
+    }
+
+    const child = childById.get(taskId);
+    if (!child) {
+      return undefined;
+    }
+
+    visiting.add(taskId);
+    path.push(taskId);
+    for (const dependencyTaskId of child.dependencyTaskIds ?? []) {
+      const cycle = visit(dependencyTaskId);
+      if (cycle) {
+        return cycle;
+      }
+    }
+    path.pop();
+    visiting.delete(taskId);
+    visited.add(taskId);
+
+    return undefined;
+  };
+
+  for (const child of children) {
+    const cycle = visit(child.taskId);
+    if (cycle) {
+      return cycle;
+    }
   }
 
   return undefined;

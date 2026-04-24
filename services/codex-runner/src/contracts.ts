@@ -33,6 +33,7 @@ export interface CreateTaskGraphChildInput {
   repoPath?: string;
   prompt: string;
   priority?: number;
+  dependencyTaskIds?: string[];
   contextPackage?: TaskContextPackageInput;
 }
 
@@ -60,6 +61,7 @@ export type RunnerTaskDecompositionKind = "subtask";
 export interface RunnerTaskDecomposition {
   kind: RunnerTaskDecompositionKind;
   parentTaskId: string;
+  dependencyTaskIds?: string[];
 }
 
 export type ContextSourceKind =

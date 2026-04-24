@@ -466,15 +466,81 @@ function parseOptionalState(raw: string | undefined): RunnerTaskState | undefine
 }
 
 function parseChildSpec(raw: string): CreateTaskGraphInput["children"][number] {
-  const [taskId, prompt, priority] = raw.split(":", 3);
+  if (raw.trim().startsWith("{")) {
+    return parseJsonChildSpec(raw);
+  }
+
+  const firstSeparatorIndex = raw.indexOf(":");
+  if (firstSeparatorIndex === -1) {
+    throw new Error("--child must use JSON or taskId:prompt[:priority]");
+  }
+
+  const taskId = raw.slice(0, firstSeparatorIndex);
+  const promptAndPriority = raw.slice(firstSeparatorIndex + 1);
+  const lastSeparatorIndex = promptAndPriority.lastIndexOf(":");
+  const rawPriority =
+    lastSeparatorIndex === -1 ? undefined : promptAndPriority.slice(lastSeparatorIndex + 1);
+  const hasTrailingPriority = rawPriority !== undefined && /^-?\d+$/.test(rawPriority.trim());
+  const prompt = hasTrailingPriority
+    ? promptAndPriority.slice(0, lastSeparatorIndex)
+    : promptAndPriority;
+  const priority = hasTrailingPriority ? rawPriority : undefined;
+
   if (!taskId?.trim() || !prompt?.trim()) {
-    throw new Error("--child must use taskId:prompt[:priority]");
+    throw new Error("--child must use JSON or taskId:prompt[:priority]");
   }
 
   return {
     taskId: taskId.trim(),
     prompt: prompt.trim(),
     priority: parseOptionalInteger(priority, "child priority"),
+  };
+}
+
+function parseJsonChildSpec(raw: string): CreateTaskGraphInput["children"][number] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Invalid JSON child spec: ${formatCliError(error)}`);
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("JSON child spec must be an object");
+  }
+
+  const spec = parsed as Record<string, unknown>;
+  if (typeof spec.taskId !== "string" || !spec.taskId.trim()) {
+    throw new Error("JSON child spec requires taskId");
+  }
+  if (typeof spec.prompt !== "string" || !spec.prompt.trim()) {
+    throw new Error("JSON child spec requires prompt");
+  }
+  if (spec.repoPath !== undefined && typeof spec.repoPath !== "string") {
+    throw new Error("JSON child spec repoPath must be a string");
+  }
+  if (
+    spec.priority !== undefined &&
+    (typeof spec.priority !== "number" || !Number.isInteger(spec.priority))
+  ) {
+    throw new Error("JSON child spec priority must be an integer");
+  }
+
+  const dependencyTaskIds = spec.dependencyTaskIds ?? spec.dependencies;
+  if (
+    dependencyTaskIds !== undefined &&
+    (!Array.isArray(dependencyTaskIds) ||
+      dependencyTaskIds.some((dependencyTaskId) => typeof dependencyTaskId !== "string"))
+  ) {
+    throw new Error("JSON child spec dependencyTaskIds must be an array of strings");
+  }
+
+  return {
+    taskId: spec.taskId.trim(),
+    repoPath: typeof spec.repoPath === "string" ? spec.repoPath : undefined,
+    prompt: spec.prompt.trim(),
+    priority: typeof spec.priority === "number" ? spec.priority : undefined,
+    dependencyTaskIds: Array.isArray(dependencyTaskIds) ? dependencyTaskIds : undefined,
   };
 }
 
@@ -493,7 +559,7 @@ function buildHelpText(): string {
     "Commands:",
     "  start --prompt <text> [--task-id <id>] [--repo-path <path>] [--priority <n>]",
     "  status [taskId] [--state <state>]",
-    "  graph start --prompt <text> --child <taskId:prompt[:priority]> [--child ...]",
+    "  graph start --prompt <text> --child <json|taskId:prompt[:priority]> [--child ...]",
     "  graph status <taskId>",
     "  events <taskId>",
     "  interrupt <taskId>",

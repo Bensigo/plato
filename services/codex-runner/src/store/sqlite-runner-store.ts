@@ -20,6 +20,7 @@ interface RunnerTaskRow {
   active_session_id: string | null;
   decomposition_kind: RunnerTaskDecomposition["kind"] | null;
   parent_task_id: string | null;
+  dependency_task_ids_json: string | null;
   pending_approval_request_id: string | null;
   pending_approval_requested_action: string | null;
   pending_approval_reason: string | null;
@@ -77,11 +78,12 @@ export class SqliteRunnerStore implements RunnerStore {
           active_session_id,
           decomposition_kind,
           parent_task_id,
+          dependency_task_ids_json,
           pending_approval_request_id,
           pending_approval_requested_action,
           pending_approval_reason,
           pending_approval_session_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_id) DO UPDATE SET
           repo_path = excluded.repo_path,
           prompt = excluded.prompt,
@@ -91,6 +93,7 @@ export class SqliteRunnerStore implements RunnerStore {
           active_session_id = excluded.active_session_id,
           decomposition_kind = excluded.decomposition_kind,
           parent_task_id = excluded.parent_task_id,
+          dependency_task_ids_json = excluded.dependency_task_ids_json,
           pending_approval_request_id = excluded.pending_approval_request_id,
           pending_approval_requested_action = excluded.pending_approval_requested_action,
           pending_approval_reason = excluded.pending_approval_reason,
@@ -107,6 +110,7 @@ export class SqliteRunnerStore implements RunnerStore {
         task.activeSessionId ?? null,
         task.decomposition?.kind ?? null,
         task.decomposition?.parentTaskId ?? null,
+        task.decomposition ? JSON.stringify(task.decomposition.dependencyTaskIds ?? []) : null,
         task.pendingApproval?.approvalRequestId ?? null,
         task.pendingApproval?.requestedAction ?? null,
         task.pendingApproval?.reason ?? null,
@@ -128,6 +132,7 @@ export class SqliteRunnerStore implements RunnerStore {
             active_session_id,
             decomposition_kind,
             parent_task_id,
+            dependency_task_ids_json,
             pending_approval_request_id,
             pending_approval_requested_action,
             pending_approval_reason,
@@ -155,6 +160,7 @@ export class SqliteRunnerStore implements RunnerStore {
             active_session_id,
             decomposition_kind,
             parent_task_id,
+            dependency_task_ids_json,
             pending_approval_request_id,
             pending_approval_requested_action,
             pending_approval_reason,
@@ -182,6 +188,7 @@ export class SqliteRunnerStore implements RunnerStore {
             active_session_id,
             decomposition_kind,
             parent_task_id,
+            dependency_task_ids_json,
             pending_approval_request_id,
             pending_approval_requested_action,
             pending_approval_reason,
@@ -210,6 +217,7 @@ export class SqliteRunnerStore implements RunnerStore {
             active_session_id,
             decomposition_kind,
             parent_task_id,
+            dependency_task_ids_json,
             pending_approval_request_id,
             pending_approval_requested_action,
             pending_approval_reason,
@@ -295,6 +303,10 @@ export class SqliteRunnerStore implements RunnerStore {
 }
 
 function mapRunnerTaskRow(row: RunnerTaskRow): RunnerTaskRecord {
+  const dependencyTaskIds = row.dependency_task_ids_json
+    ? JSON.parse(row.dependency_task_ids_json) as string[]
+    : [];
+
   return {
     taskId: row.task_id,
     repoPath: row.repo_path,
@@ -308,6 +320,7 @@ function mapRunnerTaskRow(row: RunnerTaskRow): RunnerTaskRecord {
           decomposition: {
             kind: row.decomposition_kind,
             parentTaskId: row.parent_task_id,
+            ...(dependencyTaskIds.length > 0 ? { dependencyTaskIds } : {}),
           },
         }
       : {}),

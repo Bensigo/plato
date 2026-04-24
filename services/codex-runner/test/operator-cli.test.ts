@@ -381,6 +381,190 @@ describe("runCodexRunnerCli", () => {
     expect(JSON.parse(stdout.value)).toEqual(graph);
   });
 
+  it("parses graph child prompts that contain colons", async () => {
+    const stdout = new BufferWriter();
+    const stderr = new BufferWriter();
+    const calls: unknown[] = [];
+    const graph = {
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+        priority: 0,
+        state: "queued" as const,
+      },
+      children: [],
+      state: "queued" as const,
+    };
+    const service: RunnerOperatorClient = {
+      async startTask() {
+        throw new Error("not used");
+      },
+      async createTaskGraph(input) {
+        calls.push(input);
+        return graph;
+      },
+      async getTask() {
+        return undefined;
+      },
+      async getTaskGraph() {
+        return undefined;
+      },
+      async getTaskStatus() {
+        return undefined;
+      },
+      async listTasks() {
+        return [];
+      },
+      async listTasksByState() {
+        return [];
+      },
+      async listEvents() {
+        return [];
+      },
+      async interruptTask() {},
+      async resumeTask() {
+        throw new Error("not used");
+      },
+    };
+
+    const exitCode = await runCodexRunnerCli(
+      [
+        "graph",
+        "start",
+        "--task-id",
+        "task-parent",
+        "--repo-path",
+        "/repo",
+        "--prompt",
+        "Coordinate",
+        "--child",
+        "task-child:Build API: include http://localhost:3000 routes:3",
+      ],
+      {
+        stdout,
+        stderr,
+        openRuntime: buildRuntime(service),
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    expect(calls).toEqual([
+      {
+        parent: {
+          taskId: "task-parent",
+          repoPath: "/repo",
+          prompt: "Coordinate",
+          priority: undefined,
+        },
+        children: [
+          {
+            taskId: "task-child",
+            prompt: "Build API: include http://localhost:3000 routes",
+            priority: 3,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("parses JSON graph child specs with dependency metadata", async () => {
+    const stdout = new BufferWriter();
+    const stderr = new BufferWriter();
+    const calls: unknown[] = [];
+    const graph = {
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+        priority: 0,
+        state: "queued" as const,
+      },
+      children: [],
+      state: "queued" as const,
+    };
+    const service: RunnerOperatorClient = {
+      async startTask() {
+        throw new Error("not used");
+      },
+      async createTaskGraph(input) {
+        calls.push(input);
+        return graph;
+      },
+      async getTask() {
+        return undefined;
+      },
+      async getTaskGraph() {
+        return undefined;
+      },
+      async getTaskStatus() {
+        return undefined;
+      },
+      async listTasks() {
+        return [];
+      },
+      async listTasksByState() {
+        return [];
+      },
+      async listEvents() {
+        return [];
+      },
+      async interruptTask() {},
+      async resumeTask() {
+        throw new Error("not used");
+      },
+    };
+
+    const exitCode = await runCodexRunnerCli(
+      [
+        "graph",
+        "start",
+        "--task-id",
+        "task-parent",
+        "--repo-path",
+        "/repo",
+        "--prompt",
+        "Coordinate",
+        "--child",
+        JSON.stringify({
+          taskId: "task-child",
+          repoPath: "/other-repo",
+          prompt: "Build API: preserve colons",
+          priority: 4,
+          dependencyTaskIds: ["task-foundation"],
+        }),
+      ],
+      {
+        stdout,
+        stderr,
+        openRuntime: buildRuntime(service),
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    expect(calls).toEqual([
+      {
+        parent: {
+          taskId: "task-parent",
+          repoPath: "/repo",
+          prompt: "Coordinate",
+          priority: undefined,
+        },
+        children: [
+          {
+            taskId: "task-child",
+            repoPath: "/other-repo",
+            prompt: "Build API: preserve colons",
+            priority: 4,
+            dependencyTaskIds: ["task-foundation"],
+          },
+        ],
+      },
+    ]);
+  });
+
   it("prints a task graph snapshot for graph status <taskId>", async () => {
     const stdout = new BufferWriter();
     const stderr = new BufferWriter();

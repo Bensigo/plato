@@ -8,6 +8,7 @@ import {
   type ContextArtifact,
   type ContextPackageRecord,
   type ContextSource,
+  type CreateTaskGraphInput,
   WorktreeProvisioningError,
   type LogStreamer,
   ManagedSession,
@@ -453,6 +454,7 @@ describe("CodexRunnerService", () => {
           taskId: "task-child-b",
           repoPath: "/other-repo",
           prompt: "Write docs",
+          dependencyTaskIds: ["task-child-a"],
           contextPackage: {
             sources: [],
             artifacts: [buildContextArtifact()],
@@ -468,6 +470,7 @@ describe("CodexRunnerService", () => {
         prompt: "Coordinate the implementation",
         priority: 0,
         state: "queued",
+        decomposition: undefined,
       },
       children: [
         {
@@ -490,6 +493,7 @@ describe("CodexRunnerService", () => {
           decomposition: {
             kind: "subtask",
             parentTaskId: "task-parent",
+            dependencyTaskIds: ["task-child-a"],
           },
         },
       ],
@@ -544,6 +548,87 @@ describe("CodexRunnerService", () => {
       }),
     ).rejects.toThrow("Task graph contains duplicate task id task-child");
     await expect(service.listTasks()).resolves.toEqual([]);
+  });
+
+  it("rejects invalid child dependency metadata before persisting a task graph", async () => {
+    const cases: Array<{
+      children: CreateTaskGraphInput["children"];
+      message: string;
+    }> = [
+      {
+        children: [
+          {
+            taskId: "task-child-a",
+            prompt: "First child",
+            dependencyTaskIds: ["task-child-b", "task-child-b"],
+          },
+          {
+            taskId: "task-child-b",
+            prompt: "Second child",
+          },
+        ],
+        message: "Task graph child task-child-a contains duplicate dependency task-child-b",
+      },
+      {
+        children: [
+          {
+            taskId: "task-child-a",
+            prompt: "First child",
+            dependencyTaskIds: ["task-missing"],
+          },
+        ],
+        message: "Task graph child task-child-a depends on missing child task task-missing",
+      },
+      {
+        children: [
+          {
+            taskId: "task-child-a",
+            prompt: "First child",
+            dependencyTaskIds: ["task-child-a"],
+          },
+        ],
+        message: "Task graph child task-child-a cannot depend on itself",
+      },
+      {
+        children: [
+          {
+            taskId: "task-child-a",
+            prompt: "First child",
+            dependencyTaskIds: ["task-child-b"],
+          },
+          {
+            taskId: "task-child-b",
+            prompt: "Second child",
+            dependencyTaskIds: ["task-child-a"],
+          },
+        ],
+        message:
+          "Task graph child dependencies contain a cycle: task-child-a -> task-child-b -> task-child-a",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const store = new InMemoryRunnerStore();
+      const service = new CodexRunnerService({
+        store,
+        sessionStore: new InMemorySessionStore(),
+        logStreamer: new InMemoryLogStreamer(),
+        worktreeManager: new FakeWorktreeManager(),
+        maxConcurrentTasks: 0,
+      });
+
+      await expect(
+        service.createTaskGraph({
+          parent: {
+            taskId: "task-parent",
+            repoPath: "/repo",
+            prompt: "Parent",
+          },
+          children: testCase.children,
+        }),
+      ).rejects.toThrow(testCase.message);
+      await expect(service.listTasks()).resolves.toEqual([]);
+    }
   });
 
   it("leaves later tasks queued when the pool is full", async () => {
@@ -941,6 +1026,58 @@ describe("CodexRunnerService", () => {
         graphState: "failed",
       },
     ]);
+  });
+
+  it("emits the graph terminal event when the parent is the last task to complete", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 3,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+      },
+      children: [
+        {
+          taskId: "task-child-a",
+          prompt: "First child",
+        },
+        {
+          taskId: "task-child-b",
+          prompt: "Second child",
+        },
+      ],
+    });
+
+    await agentSession.exit("session-1", 0);
+    await agentSession.exit("session-2", 0);
+    await expect(service.getTaskGraph("task-parent")).resolves.toMatchObject({
+      state: "running",
+    });
+
+    await agentSession.exit("session-3", 0);
+
+    await expect(service.getTaskGraph("task-parent")).resolves.toMatchObject({
+      state: "completed",
+    });
+    await expect(service.listEvents("task-parent")).resolves.toContainEqual({
+      taskId: "task-parent",
+      type: "task.graph.completed",
+      parentTaskId: "task-parent",
+      graphState: "completed",
+    });
   });
 
   it("persists a pending approval checkpoint and resumes with a new session when approved", async () => {
