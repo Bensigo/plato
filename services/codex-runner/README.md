@@ -59,6 +59,13 @@ That event stream is the service's audit trail. Other parts of Plato should be a
 
 `CodexRunnerAgentRuntime` is this package's adapter for that boundary. It maps Plato-level `workspacePath` and orchestration graph inputs to the runner's `repoPath` and task graph APIs, then maps runner records and events back to neutral orchestration records with `execution: { runtimeId, backend: "codex" }`.
 
+The caller-facing CLI/MCP runtime bootstrap lives in `apps/plato-cli/src/bootstrap.ts`.
+That app-level composition opens the existing operator runtime, wraps the runner
+service in `CodexRunnerAgentRuntime`, and registers it with
+`TaskOrchestrationService`. The runner package exports its service, adapter, and
+operator runtime pieces for that bootstrap, while product handlers continue to
+speak only orchestration contracts.
+
 ## What Codex Runner Is Becoming
 
 The longer-term role of this workspace is to be one of Plato's core execution services for agent work:
