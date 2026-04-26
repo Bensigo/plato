@@ -1,4 +1,7 @@
 import { TaskOrchestrationService } from "@plato/orchestration";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type {
   CodexRunnerAgentRuntimeService,
   OperatorRuntimeOptions,
@@ -186,4 +189,29 @@ export async function createPlatoMcpServerWithRuntime(
       runtime.close();
     },
   };
+}
+
+export interface RunPlatoMcpWithRuntimeOptions extends PlatoRuntimeOptions {
+  createTransport?: () => Transport;
+  connectServer?: (server: McpServer, transport: Transport) => Promise<void>;
+}
+
+export async function runPlatoMcpWithRuntime(
+  options: RunPlatoMcpWithRuntimeOptions = {},
+): Promise<number> {
+  const runtime = await createPlatoMcpServerWithRuntime(options);
+  const createTransport = options.createTransport ?? (() => new StdioServerTransport());
+  const connectServer = options.connectServer ?? ((server, transport) => server.connect(transport));
+
+  try {
+    await connectServer(runtime.server, createTransport());
+    return 0;
+  } catch (error) {
+    try {
+      await runtime.server.close();
+    } finally {
+      runtime.close();
+    }
+    throw error;
+  }
 }

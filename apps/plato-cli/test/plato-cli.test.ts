@@ -1,9 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+
+import { runPlato } from "../src/cli.js";
+import { runPlatoMcp } from "../src/mcp.js";
 import { createPlatoMcpServer, runPlatoCli, type OrchestrationClient } from "../src/index.js";
-import { createPlatoMcpServerWithRuntime, openPlatoRuntime, runPlatoCliWithRuntime } from "../src/bootstrap.js";
+import {
+  createPlatoMcpServerWithRuntime,
+  openPlatoRuntime,
+  runPlatoCliWithRuntime,
+  runPlatoMcpWithRuntime,
+} from "../src/bootstrap.js";
 import type {
   AgentRuntimeSelector,
   CreateOrchestrationGraphInput,
@@ -125,6 +137,55 @@ describe("plato product surface", () => {
     const handlerSource = await readFile(resolve(import.meta.dirname, "../src/index.ts"), "utf8");
 
     expect(handlerSource).not.toContain("@plato/codex-runner");
+    expect(handlerSource).not.toContain("@modelcontextprotocol/sdk/server/stdio.js");
+  });
+
+  it("dispatches plato mcp to the MCP server runner", async () => {
+    const runCli = vi.fn(async () => 1);
+    const runMcp = vi.fn(async () => 0);
+
+    await expect(runPlato(["mcp"], { runCli, runMcp })).resolves.toBe(0);
+
+    expect(runMcp).toHaveBeenCalledTimes(1);
+    expect(runCli).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid plato mcp arguments before opening the runtime", async () => {
+    const runMcp = vi.fn(async () => {
+      throw new Error("runtime should not open");
+    });
+    const stderr = new MemoryStream();
+
+    await expect(runPlato(["mcp", "--bad-flag"], { runMcp, stderr })).resolves.toBe(1);
+
+    expect(runMcp).not.toHaveBeenCalled();
+    expect(stderr.text).toBe("usage: plato mcp\n");
+  });
+
+  it("serves the Plato MCP tool catalog over an MCP transport", async () => {
+    const client = new Client({ name: "plato-test", version: "0.1.0" });
+    const server = createPlatoMcpServer(new FakeOrchestrationClient());
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([
+        client.connect(clientTransport),
+        server.connect(serverTransport),
+      ]);
+
+      const tools = await client.listTools();
+      expect(tools.tools.map((tool) => tool.name)).toContain("plato.list_tasks");
+
+      const result = await client.callTool({
+        name: "plato.list_tasks",
+        arguments: {},
+      });
+      const content = result.content as Array<{ type: string; text?: string }>;
+      expect(JSON.parse(content[0]?.type === "text" ? content[0].text ?? "null" : "null")).toEqual([]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it("bootstraps the CLI surface with a real Codex-backed orchestration runtime", async () => {
@@ -248,6 +309,76 @@ describe("plato product surface", () => {
     expect(runner.closed).toBe(true);
   });
 
+  it("connects the runtime-backed MCP server to an injected transport", async () => {
+    const runner = new FakeRunnerOperatorClient();
+    const transport = new FakeTransport();
+    let connectedTransport: Transport | undefined;
+    const connectServer = vi.fn(async (_server: McpServer, nextTransport: Transport) => {
+      connectedTransport = nextTransport;
+    });
+
+    await expect(
+      runPlatoMcpWithRuntime({
+        openCodexRuntime: () => ({
+          service: runner,
+          close: () => {
+            runner.closed = true;
+          },
+        }),
+        createTransport: () => transport,
+        connectServer,
+      }),
+    ).resolves.toBe(0);
+
+    expect(connectServer).toHaveBeenCalledTimes(1);
+    expect(connectedTransport).toBe(transport);
+    expect(runner.closed).toBe(false);
+  });
+
+  it("exposes a dedicated plato-mcp runner without opening Codex on import", async () => {
+    const runner = new FakeRunnerOperatorClient();
+    let connected = false;
+
+    await expect(
+      runPlatoMcp({
+        openCodexRuntime: () => ({
+          service: runner,
+          close: () => {
+            runner.closed = true;
+          },
+        }),
+        createTransport: () => new FakeTransport(),
+        connectServer: async () => {
+          connected = true;
+        },
+      }),
+    ).resolves.toBe(0);
+
+    expect(connected).toBe(true);
+    expect(runner.closed).toBe(false);
+  });
+
+  it("closes the runtime-backed MCP server when transport connection fails", async () => {
+    const runner = new FakeRunnerOperatorClient();
+
+    await expect(
+      runPlatoMcpWithRuntime({
+        openCodexRuntime: () => ({
+          service: runner,
+          close: () => {
+            runner.closed = true;
+          },
+        }),
+        createTransport: () => new FakeTransport(),
+        connectServer: async () => {
+          throw new Error("connect failed");
+        },
+      }),
+    ).rejects.toThrow("connect failed");
+
+    expect(runner.closed).toBe(true);
+  });
+
   it("opens a closeable orchestration client with the selected runtime id", async () => {
     const runner = new FakeRunnerOperatorClient();
     const runtime = await openPlatoRuntime({
@@ -280,6 +411,14 @@ class MemoryStream {
     this.text += chunk;
     return true;
   }
+}
+
+class FakeTransport implements Transport {
+  async start(): Promise<void> {}
+
+  async send(): Promise<void> {}
+
+  async close(): Promise<void> {}
 }
 
 class FakeOrchestrationClient implements OrchestrationClient {

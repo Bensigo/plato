@@ -19,13 +19,30 @@ Codex-backed runtime for one command. Use `createPlatoMcpServerWithRuntime()`
 when MCP hosting code needs a server plus a `close()` hook for the opened
 runtime resources.
 
-The package also exposes the `plato` bin. The executable is intentionally thin:
-it calls `runPlatoCliWithRuntime(process.argv.slice(2))` and keeps command
-behavior in the injected-client handler surface.
+The package exposes two thin executables:
+
+- `plato` for operator CLI commands, including `plato mcp`
+- `plato-mcp` for agent configs that prefer a dedicated MCP command
+
+Both MCP entrypoints use stdio transport. Do not write normal logs to stdout in
+this process; stdout is reserved for MCP JSON-RPC messages.
 
 The boundary rule is intentional: handler tests should use fake
 `OrchestrationClient` implementations, and only bootstrap or executable
 entrypoints should import concrete runtime adapters.
+
+Example local agent configuration:
+
+```json
+{
+  "mcpServers": {
+    "plato": {
+      "command": "plato",
+      "args": ["mcp"]
+    }
+  }
+}
+```
 
 ## Tool Catalog
 

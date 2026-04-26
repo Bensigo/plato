@@ -11,7 +11,8 @@
     }
   },
   "bin": {
-    "plato": "./dist/src/cli.js"
+    "plato": "./dist/src/cli.js",
+    "plato-mcp": "./dist/src/mcp.js"
   },
   "main": "./dist/src/index.js",
   "types": "./src/index.ts",
