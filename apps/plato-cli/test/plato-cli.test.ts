@@ -172,6 +172,62 @@ describe("plato product surface", () => {
     expect(runner.closed).toBe(true);
   });
 
+  it("does not open the Codex runtime for invalid CLI commands", async () => {
+    let opened = false;
+    const stderr = new MemoryStream();
+
+    await expect(
+      runPlatoCliWithRuntime([], {
+        stderr,
+        openCodexRuntime: () => {
+          opened = true;
+          throw new Error("runtime should not open");
+        },
+      }),
+    ).resolves.toBe(1);
+
+    expect(opened).toBe(false);
+    expect(stderr.text).toContain("usage: plato task|graph <command>");
+  });
+
+  it("does not open the Codex runtime for commands that fail local flag validation", async () => {
+    let opened = false;
+    const stderr = new MemoryStream();
+
+    await expect(
+      runPlatoCliWithRuntime(["task", "start", "--prompt", "Build it"], {
+        stderr,
+        openCodexRuntime: () => {
+          opened = true;
+          throw new Error("runtime should not open");
+        },
+      }),
+    ).resolves.toBe(1);
+
+    expect(opened).toBe(false);
+    expect(stderr.text).toContain("missing required --task-id");
+  });
+
+  it("closes the Codex runtime when orchestration bootstrap fails", async () => {
+    const runner = new FakeRunnerOperatorClient();
+    let closed = false;
+
+    await expect(
+      openPlatoRuntime({
+        runtimeId: "codex-local",
+        defaultRuntimeId: "missing-runtime",
+        openCodexRuntime: () => ({
+          service: runner,
+          close: () => {
+            closed = true;
+          },
+        }),
+      }),
+    ).rejects.toThrow("Default agent runtime 'missing-runtime' is not registered");
+
+    expect(closed).toBe(true);
+  });
+
   it("bootstraps MCP with an injected Codex-backed orchestration runtime", async () => {
     const runner = new FakeRunnerOperatorClient();
 

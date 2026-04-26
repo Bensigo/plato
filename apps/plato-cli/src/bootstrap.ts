@@ -1,9 +1,7 @@
 import { TaskOrchestrationService } from "@plato/orchestration";
-import {
-  CodexRunnerAgentRuntime,
-  type CodexRunnerAgentRuntimeService,
-  openOperatorRuntime,
-  type OperatorRuntimeOptions,
+import type {
+  CodexRunnerAgentRuntimeService,
+  OperatorRuntimeOptions,
 } from "@plato/codex-runner";
 
 import {
@@ -12,6 +10,11 @@ import {
   type OrchestrationClient,
   type PlatoCliOptions,
 } from "./index.js";
+import type {
+  AgentRuntimeSelector,
+  CreateOrchestrationGraphInput,
+  StartOrchestrationTaskInput,
+} from "@plato/orchestration";
 
 export interface PlatoRuntimeOptions extends OperatorRuntimeOptions {
   runtimeId?: string;
@@ -34,23 +37,31 @@ export async function openPlatoRuntime(options: PlatoRuntimeOptions = {}): Promi
   const codexRuntime = options.openCodexRuntime
     ? await options.openCodexRuntime(options)
     : await openDefaultCodexRuntime(options);
-  const orchestrationRuntime = new CodexRunnerAgentRuntime({
-    runtimeId,
-    service: codexRuntime.service,
-  });
 
-  return {
-    client: new TaskOrchestrationService({
-      defaultRuntimeId: options.defaultRuntimeId ?? runtimeId,
-      runtimes: [orchestrationRuntime],
-    }),
-    close: () => {
-      codexRuntime.close();
-    },
-  };
+  try {
+    const { CodexRunnerAgentRuntime } = await import("@plato/codex-runner");
+    const orchestrationRuntime = new CodexRunnerAgentRuntime({
+      runtimeId,
+      service: codexRuntime.service,
+    });
+
+    return {
+      client: new TaskOrchestrationService({
+        defaultRuntimeId: options.defaultRuntimeId ?? runtimeId,
+        runtimes: [orchestrationRuntime],
+      }),
+      close: () => {
+        codexRuntime.close();
+      },
+    };
+  } catch (error) {
+    codexRuntime.close();
+    throw error;
+  }
 }
 
 async function openDefaultCodexRuntime(options: OperatorRuntimeOptions): Promise<PlatoCodexRuntime> {
+  const { openOperatorRuntime } = await import("@plato/codex-runner");
   const runtime = await openOperatorRuntime(options);
   return {
     service: runtime.service as unknown as CodexRunnerAgentRuntimeService,
@@ -68,7 +79,7 @@ export async function runPlatoCliWithRuntime(
   argv: string[],
   options: RunPlatoCliWithRuntimeOptions = {},
 ): Promise<number> {
-  const runtime = await openPlatoRuntime(options);
+  const runtime = new LazyPlatoRuntime(options);
   try {
     return await runPlatoCli(argv, {
       client: runtime.client,
@@ -77,6 +88,86 @@ export async function runPlatoCliWithRuntime(
     });
   } finally {
     runtime.close();
+  }
+}
+
+class LazyPlatoRuntime implements PlatoRuntime {
+  readonly client: OrchestrationClient;
+  readonly #options: PlatoRuntimeOptions;
+  #runtime?: Promise<PlatoRuntime>;
+  #openedRuntime?: PlatoRuntime;
+
+  constructor(options: PlatoRuntimeOptions) {
+    this.#options = options;
+    this.client = new LazyOrchestrationClient(() => this.#open());
+  }
+
+  close(): void {
+    this.#openedRuntime?.close();
+  }
+
+  async #open(): Promise<PlatoRuntime> {
+    this.#runtime ??= openPlatoRuntime(this.#options).then((runtime) => {
+      this.#openedRuntime = runtime;
+      return runtime;
+    });
+    return this.#runtime;
+  }
+}
+
+class LazyOrchestrationClient implements OrchestrationClient {
+  readonly #openRuntime: () => Promise<PlatoRuntime>;
+
+  constructor(openRuntime: () => Promise<PlatoRuntime>) {
+    this.#openRuntime = openRuntime;
+  }
+
+  async startTask(input: StartOrchestrationTaskInput) {
+    return (await this.#client()).startTask(input);
+  }
+
+  async createTaskGraph(input: CreateOrchestrationGraphInput) {
+    return (await this.#client()).createTaskGraph(input);
+  }
+
+  async getTask(taskId: string, selector?: AgentRuntimeSelector) {
+    return (await this.#client()).getTask(taskId, selector);
+  }
+
+  async getTaskGraph(taskId: string, selector?: AgentRuntimeSelector) {
+    return (await this.#client()).getTaskGraph(taskId, selector);
+  }
+
+  async getTaskGraphResults(taskId: string, selector?: AgentRuntimeSelector) {
+    return (await this.#client()).getTaskGraphResults(taskId, selector);
+  }
+
+  async listTasks(selector?: AgentRuntimeSelector) {
+    return (await this.#client()).listTasks(selector);
+  }
+
+  async listEvents(taskId: string, selector?: AgentRuntimeSelector) {
+    return (await this.#client()).listEvents(taskId, selector);
+  }
+
+  async interruptTask(taskId: string, selector?: AgentRuntimeSelector) {
+    return (await this.#client()).interruptTask(taskId, selector);
+  }
+
+  async resumeTask(taskId: string, selector?: AgentRuntimeSelector) {
+    return (await this.#client()).resumeTask(taskId, selector);
+  }
+
+  async approveTaskAction(taskId: string, selector?: AgentRuntimeSelector) {
+    return (await this.#client()).approveTaskAction(taskId, selector);
+  }
+
+  async rejectTaskAction(taskId: string, reason: string, selector?: AgentRuntimeSelector) {
+    return (await this.#client()).rejectTaskAction(taskId, reason, selector);
+  }
+
+  async #client(): Promise<OrchestrationClient> {
+    return (await this.#openRuntime()).client;
   }
 }
 
