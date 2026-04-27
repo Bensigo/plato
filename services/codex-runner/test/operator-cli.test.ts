@@ -107,6 +107,8 @@ describe("runCodexRunnerCli", () => {
         "/tmp/plato-config.json",
         "--secrets-path",
         "/tmp/plato-secrets.json",
+        "--model",
+        "gpt-5.4",
       ],
       {
         cwd: "/workspace",
@@ -133,6 +135,7 @@ describe("runCodexRunnerCli", () => {
         logPath: undefined,
         configPath: "/tmp/plato-config.json",
         secretsPath: "/tmp/plato-secrets.json",
+        model: "gpt-5.4",
         maxConcurrentTasks: 5,
       },
     ]);
@@ -415,6 +418,8 @@ describe("runCodexRunnerCli", () => {
         "/tmp/plato-graph-config.json",
         "--secrets-path",
         "/tmp/plato-graph-secrets.json",
+        "--model",
+        "gpt-5.4",
         "--child",
         "task-child:Build API:3",
         "--child",
@@ -464,6 +469,7 @@ describe("runCodexRunnerCli", () => {
         logPath: undefined,
         configPath: "/tmp/plato-graph-config.json",
         secretsPath: "/tmp/plato-graph-secrets.json",
+        model: "gpt-5.4",
         maxConcurrentTasks: 7,
       },
     ]);

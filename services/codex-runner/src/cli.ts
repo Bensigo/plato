@@ -53,7 +53,7 @@ export interface RunnerOperatorClient {
 
 export interface OperatorRuntime {
   service: RunnerOperatorClient;
-  close(): void;
+  close(): Promise<void> | void;
 }
 
 export interface OperatorRuntimeOptions {
@@ -61,6 +61,7 @@ export interface OperatorRuntimeOptions {
   logPath?: string;
   configPath?: string;
   secretsPath?: string;
+  model?: string;
   cwd?: string;
   maxConcurrentTasks?: number;
 }
@@ -291,6 +292,7 @@ async function handleGraphStart(
       "log-path": { type: "string" },
       "config-path": { type: "string" },
       "secrets-path": { type: "string" },
+      model: { type: "string" },
     },
   });
   const prompt = parsed.values.prompt?.trim();
@@ -305,6 +307,7 @@ async function handleGraphStart(
     logPath: parsed.values["log-path"],
     configPath: parsed.values["config-path"],
     secretsPath: parsed.values["secrets-path"],
+    model: parsed.values.model,
     maxConcurrentTasks: parseOptionalInteger(parsed.values["max-concurrent-tasks"], "max concurrent tasks"),
   });
 
@@ -325,7 +328,7 @@ async function handleGraphStart(
     writeJson(options.stdout ?? process.stdout, graph);
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -364,7 +367,7 @@ async function handleGraphStatus(
     writeJson(options.stdout ?? process.stdout, graph);
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -429,7 +432,7 @@ async function loadGraphResults(
 
     return snapshot;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -443,6 +446,7 @@ export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}):
     logStreamer: new FileLogStreamer(storagePaths.logPath),
     agentSessionFactory: new CodexSdkBackedAgentSessionFactory({
       codexOptions: await resolveCodexOptionsFromConfig(options),
+      threadOptions: options.model ? { model: options.model } : undefined,
     }),
     runtimeManager: new DefaultCodexRuntimeManager(),
     maxConcurrentTasks: options.maxConcurrentTasks,
@@ -450,7 +454,8 @@ export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}):
 
   return {
     service,
-    close: () => {
+    close: async () => {
+      await service.drain();
       persistence.close();
     },
   };
@@ -489,6 +494,7 @@ async function handleStart(
       "log-path": { type: "string" },
       "config-path": { type: "string" },
       "secrets-path": { type: "string" },
+      model: { type: "string" },
     },
   });
   const prompt = parsed.values.prompt?.trim();
@@ -502,6 +508,7 @@ async function handleStart(
     logPath: parsed.values["log-path"],
     configPath: parsed.values["config-path"],
     secretsPath: parsed.values["secrets-path"],
+    model: parsed.values.model,
     maxConcurrentTasks: parseOptionalInteger(parsed.values["max-concurrent-tasks"], "max concurrent tasks"),
   });
 
@@ -520,7 +527,7 @@ async function handleStart(
     writeJson(options.stdout ?? process.stdout, { task });
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -567,7 +574,7 @@ async function handleStatus(
     writeJson(options.stdout ?? process.stdout, { tasks });
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -603,7 +610,7 @@ async function handleEvents(
     writeJson(options.stdout ?? process.stdout, { taskId, events });
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -640,7 +647,7 @@ async function handleInterrupt(
     writeJson(options.stdout ?? process.stdout, snapshot ?? { taskId, interrupted: true });
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -677,7 +684,7 @@ async function handleResume(
     writeJson(options.stdout ?? process.stdout, snapshot ?? { taskId });
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 

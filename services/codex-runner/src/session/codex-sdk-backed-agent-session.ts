@@ -36,6 +36,7 @@ export class CodexSdkBackedAgentSession implements AgentSession {
   readonly #logStreamer: LogStreamer;
   readonly #threadOptions?: Omit<ThreadOptions, "workingDirectory">;
   readonly #abortControllers = new Map<string, AbortController>();
+  readonly #activeConsumers = new Set<Promise<void>>();
 
   constructor(
     codex: CodexClientLike,
@@ -66,7 +67,11 @@ export class CodexSdkBackedAgentSession implements AgentSession {
       sessionId,
       worktreePath: worktree.worktreePath,
     });
-    void this.#consumeThread(task, worktree, sessionId, thread, abortController, handlers);
+    const consumer = this.#consumeThread(task, worktree, sessionId, thread, abortController, handlers);
+    this.#activeConsumers.add(consumer);
+    void consumer.finally(() => {
+      this.#activeConsumers.delete(consumer);
+    });
 
     return {
       sessionId,
@@ -77,6 +82,12 @@ export class CodexSdkBackedAgentSession implements AgentSession {
 
   async interrupt(sessionId: string): Promise<void> {
     this.#abortControllers.get(sessionId)?.abort();
+  }
+
+  async drain(): Promise<void> {
+    while (this.#activeConsumers.size > 0) {
+      await Promise.allSettled([...this.#activeConsumers]);
+    }
   }
 
   async #consumeThread(

@@ -113,6 +113,7 @@ function isRuntimeOption(key: string): boolean {
     "log-path",
     "config-path",
     "secrets-path",
+    "model",
     "max-concurrent-tasks",
   ].includes(key);
 }
@@ -130,6 +131,8 @@ function runtimeOptionValue(
       return { option: { configPath: value } };
     case "secrets-path":
       return { option: { secretsPath: value } };
+    case "model":
+      return { option: { model: value } };
     case "max-concurrent-tasks": {
       const parsed = Number.parseInt(value, 10);
       return Number.isInteger(parsed) && `${parsed}` === value

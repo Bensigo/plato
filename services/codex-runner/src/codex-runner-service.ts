@@ -98,6 +98,10 @@ export class CodexRunnerService {
     return this.#requireTask(task.taskId);
   }
 
+  async drain(): Promise<void> {
+    await this.#agentSession.drain?.();
+  }
+
   async createTaskGraph(input: CreateTaskGraphInput): Promise<RunnerTaskGraphSnapshot> {
     await this.#validateCreateTaskGraphInput(input);
 

@@ -503,6 +503,8 @@ describe("plato product surface", () => {
         "/tmp/plato-smoke/runner.sqlite",
         "--log-path",
         "/tmp/plato-smoke/events.json",
+        "--model",
+        "gpt-5.4",
         "--max-concurrent-tasks",
         "2",
       ], { runCli }),
@@ -511,6 +513,7 @@ describe("plato product surface", () => {
     expect(runCli).toHaveBeenCalledWith(["task", "list"], {
       dbPath: "/tmp/plato-smoke/runner.sqlite",
       logPath: "/tmp/plato-smoke/events.json",
+      model: "gpt-5.4",
       maxConcurrentTasks: 2,
       stdout: undefined,
       stderr: undefined,

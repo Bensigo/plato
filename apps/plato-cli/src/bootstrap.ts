@@ -27,12 +27,12 @@ export interface PlatoRuntimeOptions extends OperatorRuntimeOptions {
 
 export interface PlatoCodexRuntime {
   readonly service: CodexRunnerAgentRuntimeService;
-  close(): void;
+  close(): Promise<void> | void;
 }
 
 export interface PlatoRuntime {
   readonly client: OrchestrationClient;
-  close(): void;
+  close(): Promise<void> | void;
 }
 
 export async function openPlatoRuntime(options: PlatoRuntimeOptions = {}): Promise<PlatoRuntime> {
@@ -53,12 +53,12 @@ export async function openPlatoRuntime(options: PlatoRuntimeOptions = {}): Promi
         defaultRuntimeId: options.defaultRuntimeId ?? runtimeId,
         runtimes: [orchestrationRuntime],
       }),
-      close: () => {
-        codexRuntime.close();
+      close: async () => {
+        await codexRuntime.close();
       },
     };
   } catch (error) {
-    codexRuntime.close();
+    await codexRuntime.close();
     throw error;
   }
 }
@@ -68,8 +68,8 @@ async function openDefaultCodexRuntime(options: OperatorRuntimeOptions): Promise
   const runtime = await openOperatorRuntime(options);
   return {
     service: runtime.service as unknown as CodexRunnerAgentRuntimeService,
-    close: () => {
-      runtime.close();
+    close: async () => {
+      await runtime.close();
     },
   };
 }
@@ -90,7 +90,7 @@ export async function runPlatoCliWithRuntime(
       stderr: options.stderr,
     });
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -105,8 +105,8 @@ class LazyPlatoRuntime implements PlatoRuntime {
     this.client = new LazyOrchestrationClient(() => this.#open());
   }
 
-  close(): void {
-    this.#openedRuntime?.close();
+  async close(): Promise<void> {
+    await this.#openedRuntime?.close();
   }
 
   async #open(): Promise<PlatoRuntime> {
@@ -176,7 +176,7 @@ class LazyOrchestrationClient implements OrchestrationClient {
 
 export interface PlatoMcpRuntime {
   readonly server: ReturnType<typeof createPlatoMcpServer>;
-  close(): void;
+  close(): Promise<void> | void;
 }
 
 export async function createPlatoMcpServerWithRuntime(
@@ -185,8 +185,8 @@ export async function createPlatoMcpServerWithRuntime(
   const runtime = await openPlatoRuntime(options);
   return {
     server: createPlatoMcpServer(runtime.client),
-    close: () => {
-      runtime.close();
+    close: async () => {
+      await runtime.close();
     },
   };
 }
@@ -210,7 +210,7 @@ export async function runPlatoMcpWithRuntime(
     try {
       await runtime.server.close();
     } finally {
-      runtime.close();
+      await runtime.close();
     }
     throw error;
   }
