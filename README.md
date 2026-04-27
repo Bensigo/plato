@@ -124,6 +124,13 @@ That means the repo already has the beginnings of a trustworthy execution layer,
 - Push each milestone branch and open a PR before building the next step on top of it.
 - Keep tests and contracts close to the workspace that owns the behavior.
 
+## npm Publishing
+
+Pushes to `main` run `.github/workflows/npm-publish.yml`. The workflow tests the
+publishable packages, then publishes any package version that is not already on
+npm. Configure the repository secret `NPM_TOKEN` with a granular npm automation
+token that can publish the `@bensigo/*` packages.
+
 The current milestone path for the product is documented in [docs/milestones.md](/Users/macbook/work/plato/docs/milestones.md).
 
 For service-specific guidance on Codex execution, start with [services/codex-runner/README.md](/Users/macbook/work/plato/services/codex-runner/README.md) and [services/codex-runner/AGENTS.md](/Users/macbook/work/plato/services/codex-runner/AGENTS.md).
