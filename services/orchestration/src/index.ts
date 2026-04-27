@@ -71,6 +71,19 @@ export interface OrchestrationTaskVerificationPlan {
   acceptanceCriteria: string[];
 }
 
+export interface OrchestrationToolHarnessDescriptor {
+  name: string;
+  title: string;
+  description: string;
+  mode: "read" | "write" | "control" | "external";
+  riskLevel: OrchestrationPlanRiskLevel;
+  requiresApproval?: boolean;
+  documentationRequired?: boolean;
+  failureModes: string[];
+}
+
+export type OrchestrationToolHarnessCatalog = readonly OrchestrationToolHarnessDescriptor[];
+
 export interface PlannedOrchestrationGraphChildInput extends CreateOrchestrationGraphChildInput {
   objective: string;
   writeScope: OrchestrationTaskWriteScope;
@@ -96,6 +109,7 @@ export interface OrchestrationPlanValidationIssue {
   code: string;
   message: string;
   taskId?: string;
+  toolName?: string;
 }
 
 export interface OrchestrationPlanValidationResult {

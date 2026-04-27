@@ -4,8 +4,136 @@ import type {
   OrchestrationPlanValidationIssue,
   OrchestrationPlanValidationResult,
   OrchestrationTaskDecompositionPlan,
+  OrchestrationToolHarnessCatalog,
+  OrchestrationToolHarnessDescriptor,
   PlannedOrchestrationGraphChildInput,
 } from "./index.js";
+
+export const DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG = [
+  {
+    name: "context7.resolve_library",
+    title: "Resolve Context7 Library",
+    description: "Resolve a package, SDK, framework, or API name to a Context7 documentation id.",
+    mode: "external",
+    riskLevel: "low",
+    documentationRequired: false,
+    failureModes: ["library_not_found", "ambiguous_library"],
+  },
+  {
+    name: "context7.get_docs",
+    title: "Fetch Context7 Docs",
+    description: "Fetch current version-specific documentation from Context7 for a resolved library id.",
+    mode: "external",
+    riskLevel: "low",
+    documentationRequired: false,
+    failureModes: ["docs_unavailable", "version_not_found"],
+  },
+  {
+    name: "inspect_workspace",
+    title: "Inspect Workspace",
+    description: "Read package metadata, workspace structure, and local contributor instructions.",
+    mode: "read",
+    riskLevel: "low",
+    failureModes: ["workspace_not_found", "metadata_unavailable"],
+  },
+  {
+    name: "search_repo",
+    title: "Search Repository",
+    description: "Search repository files for symbols, contracts, tests, and existing implementation patterns.",
+    mode: "read",
+    riskLevel: "low",
+    failureModes: ["no_matches", "search_failed"],
+  },
+  {
+    name: "read_file",
+    title: "Read File",
+    description: "Read a specific repository file needed for implementation context.",
+    mode: "read",
+    riskLevel: "low",
+    failureModes: ["file_not_found", "read_failed"],
+  },
+  {
+    name: "read_contract",
+    title: "Read Contract",
+    description: "Read service or product-facing contracts before changing behavior.",
+    mode: "read",
+    riskLevel: "low",
+    failureModes: ["contract_not_found", "read_failed"],
+  },
+  {
+    name: "list_tests",
+    title: "List Tests",
+    description: "Discover relevant test and typecheck commands for a workspace.",
+    mode: "read",
+    riskLevel: "low",
+    failureModes: ["test_command_not_found"],
+  },
+  {
+    name: "run_tests",
+    title: "Run Tests",
+    description: "Run targeted tests for a worker task.",
+    mode: "control",
+    riskLevel: "medium",
+    failureModes: ["test_failed", "command_unavailable"],
+  },
+  {
+    name: "run_typecheck",
+    title: "Run Typecheck",
+    description: "Run workspace type checks for a worker task.",
+    mode: "control",
+    riskLevel: "medium",
+    failureModes: ["typecheck_failed", "command_unavailable"],
+  },
+  {
+    name: "apply_patch",
+    title: "Apply Patch",
+    description: "Make scoped file edits inside the declared write boundary.",
+    mode: "write",
+    riskLevel: "medium",
+    failureModes: ["patch_failed", "write_scope_violation"],
+  },
+  {
+    name: "get_task_graph",
+    title: "Get Task Graph",
+    description: "Inspect an existing Plato task graph.",
+    mode: "read",
+    riskLevel: "low",
+    failureModes: ["task_graph_not_found"],
+  },
+  {
+    name: "get_task_events",
+    title: "Get Task Events",
+    description: "Inspect structured events for a Plato task.",
+    mode: "read",
+    riskLevel: "low",
+    failureModes: ["task_not_found"],
+  },
+  {
+    name: "request_review",
+    title: "Request Review",
+    description: "Ask for human or agent review before continuing.",
+    mode: "control",
+    riskLevel: "low",
+    failureModes: ["review_unavailable"],
+  },
+  {
+    name: "git.push",
+    title: "Push Git Branch",
+    description: "Push a milestone branch to GitHub.",
+    mode: "external",
+    riskLevel: "high",
+    requiresApproval: true,
+    failureModes: ["push_rejected", "remote_unavailable"],
+  },
+  {
+    name: "github.open_pr",
+    title: "Open Pull Request",
+    description: "Open a milestone pull request for review.",
+    mode: "external",
+    riskLevel: "medium",
+    failureModes: ["pr_create_failed", "remote_unavailable"],
+  },
+] as const satisfies OrchestrationToolHarnessCatalog;
 
 export function createGraphInputFromDecompositionPlan(
   plan: OrchestrationTaskDecompositionPlan,
@@ -23,11 +151,20 @@ export function createGraphInputFromDecompositionPlan(
   };
 }
 
+export interface OrchestrationPlanValidationOptions {
+  toolCatalog?: OrchestrationToolHarnessCatalog;
+}
+
 export function validateTaskDecompositionPlan(
   plan: OrchestrationTaskDecompositionPlan,
+  options: OrchestrationPlanValidationOptions = {
+    toolCatalog: DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG,
+  },
 ): OrchestrationPlanValidationResult {
   const issues: OrchestrationPlanValidationIssue[] = [];
   const childTaskIds = plan.children.map((child) => child.taskId);
+  const toolCatalog = options.toolCatalog ?? DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG;
+  const toolsByName = new Map(toolCatalog.map((tool) => [tool.name, tool]));
 
   pushIfBlank(issues, plan.planId, "PLAN_ID_REQUIRED", "Plan id is required");
   pushIfBlank(issues, plan.summary, "PLAN_SUMMARY_REQUIRED", "Plan summary is required");
@@ -55,7 +192,7 @@ export function validateTaskDecompositionPlan(
 
   const childTaskIdSet = new Set(childTaskIds);
   for (const child of plan.children) {
-    validatePlannedChild(plan.parent.taskId, child, childTaskIdSet, issues);
+    validatePlannedChild(plan.parent.taskId, child, childTaskIdSet, issues, toolsByName);
   }
 
   const cycle = findChildDependencyCycle(plan.children);
@@ -83,6 +220,7 @@ function validatePlannedChild(
   child: PlannedOrchestrationGraphChildInput,
   childTaskIds: Set<string>,
   issues: OrchestrationPlanValidationIssue[],
+  toolsByName: Map<string, OrchestrationToolHarnessDescriptor>,
 ): void {
   pushIfBlank(issues, child.taskId, "CHILD_TASK_ID_REQUIRED", "Child task id is required", child.taskId);
   pushIfBlank(issues, child.prompt, "CHILD_PROMPT_REQUIRED", "Child prompt is required", child.taskId);
@@ -124,6 +262,16 @@ function validatePlannedChild(
       taskId: child.taskId,
     });
   }
+  const duplicateToolName = findDuplicate(child.allowedToolNames);
+  if (duplicateToolName) {
+    issues.push({
+      severity: "error",
+      code: "DUPLICATE_ALLOWED_TOOL",
+      message: `Child task ${child.taskId} contains duplicate allowed tool ${duplicateToolName}`,
+      taskId: child.taskId,
+      toolName: duplicateToolName,
+    });
+  }
   for (const toolName of child.allowedToolNames) {
     if (!toolName.trim()) {
       issues.push({
@@ -131,6 +279,45 @@ function validatePlannedChild(
         code: "ALLOWED_TOOL_NAME_REQUIRED",
         message: `Child task ${child.taskId} contains a blank allowed tool name`,
         taskId: child.taskId,
+      });
+      continue;
+    }
+    const tool = toolsByName.get(toolName);
+    if (!tool) {
+      issues.push({
+        severity: "error",
+        code: "UNKNOWN_ALLOWED_TOOL",
+        message: `Child task ${child.taskId} allows unknown tool ${toolName}`,
+        taskId: child.taskId,
+        toolName,
+      });
+      continue;
+    }
+    if (tool.requiresApproval && !child.requiresApproval) {
+      issues.push({
+        severity: "error",
+        code: "TOOL_APPROVAL_REQUIRED",
+        message: `Child task ${child.taskId} allows approval-required tool ${toolName}`,
+        taskId: child.taskId,
+        toolName,
+      });
+    }
+    if (tool.documentationRequired && (child.requiredDocumentation?.length ?? 0) === 0) {
+      issues.push({
+        severity: "error",
+        code: "TOOL_DOCUMENTATION_REQUIRED",
+        message: `Child task ${child.taskId} allows documentation-sensitive tool ${toolName} without required documentation`,
+        taskId: child.taskId,
+        toolName,
+      });
+    }
+    if (riskRank(tool.riskLevel) > riskRank(child.riskLevel)) {
+      issues.push({
+        severity: "warning",
+        code: "TOOL_RISK_EXCEEDS_TASK_RISK",
+        message: `Child task ${child.taskId} is ${child.riskLevel} risk but allows ${tool.riskLevel} risk tool ${toolName}`,
+        taskId: child.taskId,
+        toolName,
       });
     }
   }
@@ -295,6 +482,17 @@ function findDuplicate(values: string[]): string | undefined {
     seen.add(value);
   }
   return undefined;
+}
+
+function riskRank(riskLevel: "low" | "medium" | "high"): number {
+  switch (riskLevel) {
+    case "low":
+      return 1;
+    case "medium":
+      return 2;
+    case "high":
+      return 3;
+  }
 }
 
 function findChildDependencyCycle(

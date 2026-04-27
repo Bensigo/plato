@@ -168,6 +168,41 @@ describe("plato product surface", () => {
     ]);
   });
 
+  it("prints the read-only worker tool harness catalog without opening orchestration", async () => {
+    const client = new FakeOrchestrationClient();
+    const stdout = new MemoryStream();
+
+    await expect(runPlatoCli(["tool", "catalog"], { client, stdout })).resolves.toBe(0);
+
+    const catalog = JSON.parse(stdout.text) as Array<{
+      name: string;
+      mode: string;
+      riskLevel: string;
+      failureModes: string[];
+    }>;
+    expect(catalog).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "context7.resolve_library",
+          mode: "external",
+          riskLevel: "low",
+        }),
+        expect.objectContaining({
+          name: "apply_patch",
+          mode: "write",
+          riskLevel: "medium",
+        }),
+        expect.objectContaining({
+          name: "git.push",
+          mode: "external",
+          riskLevel: "high",
+          requiresApproval: true,
+        }),
+      ]),
+    );
+    expect(client.opened).toBe(false);
+  });
+
   it("creates an MCP server without depending on Codex runner internals", () => {
     const server = createPlatoMcpServer(new FakeOrchestrationClient());
 
@@ -303,11 +338,16 @@ describe("plato product surface", () => {
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining([
+          "plato.list_tools",
           "plato.list_tasks",
+          "plato.list_orchestration_tools",
           "plato.plan_task_graph",
           "plato.validate_task_graph_plan",
         ]),
       );
+      expect(tools.tools.find((tool) => tool.name === "plato.list_tools")).toMatchObject({
+        annotations: { readOnlyHint: true },
+      });
 
       const result = await client.callTool({
         name: "plato.list_tasks",
@@ -338,6 +378,23 @@ describe("plato product surface", () => {
         validation: { valid: true, issues: [] },
         graphInput: { parent: { taskId: "parent" } },
       });
+
+      const catalogResult = await client.callTool({
+        name: "plato.list_orchestration_tools",
+        arguments: {},
+      });
+      const catalogContent = catalogResult.content as Array<{ type: string; text?: string }>;
+      expect(JSON.parse(
+        catalogContent[0]?.type === "text" ? catalogContent[0].text ?? "null" : "null",
+      )).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "context7.get_docs",
+            mode: "external",
+            riskLevel: "low",
+          }),
+        ]),
+      );
     } finally {
       await client.close();
       await server.close();
@@ -404,7 +461,7 @@ describe("plato product surface", () => {
     ).resolves.toBe(1);
 
     expect(opened).toBe(false);
-    expect(stderr.text).toContain("usage: plato task|graph <command>");
+    expect(stderr.text).toContain("usage: plato task|graph|tool <command>");
   });
 
   it("does not open the Codex runtime for commands that fail local flag validation", async () => {
@@ -581,13 +638,16 @@ class FakeOrchestrationClient implements OrchestrationClient {
   readonly startedTasks: StartOrchestrationTaskInput[] = [];
   readonly createdGraphs: CreateOrchestrationGraphInput[] = [];
   tasks: OrchestrationTaskRecord[] = [];
+  opened = false;
 
   async startTask(input: StartOrchestrationTaskInput): Promise<OrchestrationTaskRecord> {
+    this.opened = true;
     this.startedTasks.push(input);
     return buildTask(input.taskId, input.workspacePath, input.prompt, input.agent);
   }
 
   async createTaskGraph(input: CreateOrchestrationGraphInput): Promise<OrchestrationTaskGraphSnapshot> {
+    this.opened = true;
     this.createdGraphs.push(input);
     return {
       parent: buildTask(input.parent.taskId, input.parent.workspacePath, input.parent.prompt, input.parent.agent),
@@ -599,36 +659,46 @@ class FakeOrchestrationClient implements OrchestrationClient {
   }
 
   async getTask(): Promise<OrchestrationTaskRecord | undefined> {
+    this.opened = true;
     return undefined;
   }
 
   async getTaskGraph(): Promise<OrchestrationTaskGraphSnapshot | undefined> {
+    this.opened = true;
     return undefined;
   }
 
   async getTaskGraphResults(): Promise<OrchestrationTaskGraphResultSnapshot | undefined> {
+    this.opened = true;
     return undefined;
   }
 
   async listTasks(): Promise<OrchestrationTaskRecord[]> {
+    this.opened = true;
     return this.tasks;
   }
 
   async listEvents(): Promise<OrchestrationEvent[]> {
+    this.opened = true;
     return [];
   }
 
-  async interruptTask(): Promise<void> {}
+  async interruptTask(): Promise<void> {
+    this.opened = true;
+  }
 
   async resumeTask(taskId: string): Promise<OrchestrationTaskRecord> {
+    this.opened = true;
     return buildTask(taskId, "/repo", "Resume");
   }
 
   async approveTaskAction(taskId: string): Promise<OrchestrationTaskRecord> {
+    this.opened = true;
     return buildTask(taskId, "/repo", "Approve");
   }
 
   async rejectTaskAction(taskId: string): Promise<OrchestrationTaskRecord> {
+    this.opened = true;
     return buildTask(taskId, "/repo", "Reject");
   }
 }
