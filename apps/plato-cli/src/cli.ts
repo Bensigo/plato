@@ -28,7 +28,7 @@ export async function runPlato(argv: string[], options: RunPlatoOptions = {}): P
     return 0;
   }
   if (command === "config") {
-    const { runCodexRunnerCli } = await import("@plato/codex-runner");
+    const { runCodexRunnerCli } = await import("@bensigo/plato-codex-runner");
     return runCodexRunnerCli(["config", ...rest], {
       cwd: process.cwd(),
       stdout: options.stdout,
@@ -84,6 +84,9 @@ function buildPlatoHelpText(): string {
     "  plato task start --workspace-path \"$PWD\" --prompt \"Inspect this repo\" --model gpt-5.4",
     "      Start a real Codex-backed task using your local Codex/ChatGPT subscription.",
     "",
+    "  plato config auth-chatgpt",
+    "      Log in with Codex/ChatGPT so real tasks use your subscription.",
+    "",
     "  plato task status --task-id <id>",
     "      Inspect the current lifecycle state for a task.",
     "",
@@ -115,11 +118,11 @@ function buildPlatoHelpText(): string {
     "  --max-concurrent-tasks <count>  Limit concurrent worker execution.",
     "",
     "More help:",
+    "  plato config --help",
     "  plato task --help",
     "  plato delegate --help",
     "  plato graph --help",
     "  plato review --help",
-    "  plato config --help",
     "  plato mcp --help",
   ].join("\n");
 }
@@ -181,15 +184,19 @@ function buildCommandHelpText(command: string): string {
       return [
         "Usage:",
         "  plato config status",
+        "  plato config auth-chatgpt [--device-code]",
         "  plato config set-model <model>",
         "  plato config clear-model",
-        "  plato config auth-chatgpt [--device-code]",
         "  plato config set-openai-key (--api-key-stdin | --api-key-env <name> | --api-key <key>)",
         "  plato config clear-openai-key",
         "",
         "Examples:",
+        "  plato config auth-chatgpt",
+        "  plato config auth-chatgpt --device-code",
         "  plato config set-model gpt-5.4",
         "  plato config status",
+        "",
+        "Use auth-chatgpt for your Codex/ChatGPT subscription. Use set-openai-key only when you want API-key billing.",
         "",
         "Per-run overrides still work with --model <name> on task, delegate, graph, and mcp commands.",
       ].join("\n");

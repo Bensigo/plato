@@ -1,5 +1,5 @@
 {
-  "name": "@plato/db",
+  "name": "@bensigo/plato-db",
   "version": "0.1.0",
   "type": "module",
   "publishConfig": {

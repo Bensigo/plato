@@ -13,7 +13,7 @@ import type {
   OrchestrationTaskGraphSnapshot,
   OrchestrationTaskRecord,
   StartOrchestrationTaskInput,
-} from "@plato/orchestration";
+} from "@bensigo/plato-orchestration";
 
 type Writer = Pick<NodeJS.WritableStream, "write">;
 

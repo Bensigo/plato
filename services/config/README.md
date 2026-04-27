@@ -1,6 +1,6 @@
 # Plato Config
 
-`@plato/config` owns local user configuration and auth material for Plato.
+`@bensigo/plato-config` owns local user configuration and auth material for Plato.
 
 Milestone 21 starts with Codex auth because Plato cannot run a real end-to-end worker flow until the runtime knows how the user wants to authenticate. The first supported provider is an OpenAI API key. ChatGPT OAuth is also represented as a first-class provider, using Codex app-server managed login for ChatGPT subscription usage.
 

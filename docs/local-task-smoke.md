@@ -14,10 +14,10 @@ The smoke path has two layers:
 Run this from the repository root:
 
 ```sh
-pnpm --filter @plato/cli smoke
+pnpm --filter @bensigo/plato-cli smoke
 ```
 
-This command builds `@plato/cli`, then runs:
+This command builds `@bensigo/plato-cli`, then runs:
 
 ```sh
 node dist/src/cli.js smoke
@@ -79,7 +79,7 @@ inside.
 First check auth:
 
 ```sh
-pnpm --filter @plato/codex-runner build
+pnpm --filter @bensigo/plato-codex-runner build
 node services/codex-runner/dist/src/cli.js config status
 ```
 
@@ -98,7 +98,7 @@ node services/codex-runner/dist/src/cli.js config auth-chatgpt
 Then build the CLI:
 
 ```sh
-pnpm --filter @plato/cli build
+pnpm --filter @bensigo/plato-cli build
 ```
 
 Optionally configure the default model for real tasks. This is useful when your

@@ -1,0 +1,64 @@
+name: Publish npm packages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run publish checks without publishing packages"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-main
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish npm packages
+    runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true' && '1' || '0' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test publishable packages
+        run: |
+          pnpm --filter @bensigo/plato-orchestration test
+          pnpm --filter @bensigo/plato-config test
+          pnpm --filter @bensigo/plato-codex-runner test
+          pnpm --filter @bensigo/plato-cli test
+
+      - name: Typecheck publishable packages
+        run: |
+          pnpm --filter @bensigo/plato-codex-runner typecheck
+          pnpm --filter @bensigo/plato-cli typecheck
+
+      - name: Publish unpublished versions
+        run: pnpm publish:npm

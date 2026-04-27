@@ -1,9 +1,9 @@
 # Plato CLI and MCP Surface
 
-`@plato/cli` owns Plato's caller-facing orchestration surface.
+`@bensigo/plato-cli` owns Plato's caller-facing orchestration surface.
 
-This package speaks `@plato/orchestration` contracts only. Command handlers and
-MCP tool handlers must not import `@plato/codex-runner`; Codex is one runtime
+This package speaks `@bensigo/plato-orchestration` contracts only. Command handlers and
+MCP tool handlers must not import `@bensigo/plato-codex-runner`; Codex is one runtime
 adapter behind the orchestration boundary, not the product API.
 
 ## Install
@@ -11,13 +11,22 @@ adapter behind the orchestration boundary, not the product API.
 Install the CLI from npm:
 
 ```sh
-npm install -g @plato/cli
+npm install -g @bensigo/plato-cli
 ```
 
-Then configure the default model you want Plato to use for real Codex-backed
-tasks:
+The global install runs a non-fatal setup check. Plato includes the official
+Codex CLI package for auth and task execution; install Codex globally only if
+you also want the standalone `codex` command:
 
 ```sh
+npm install -g @openai/codex
+```
+
+Then log in with Codex/ChatGPT so Plato can use your subscription, and configure
+the default model for real Codex-backed tasks:
+
+```sh
+plato config auth-chatgpt
 plato config set-model gpt-5.4
 plato config status
 ```
@@ -55,7 +64,7 @@ The package exposes two thin executables:
 It also exposes a deterministic health check:
 
 ```sh
-pnpm --filter @plato/cli smoke
+pnpm --filter @bensigo/plato-cli smoke
 ```
 
 The smoke command exercises task lifecycle, delegated decomposition, validation,
@@ -78,7 +87,7 @@ plato delegate plan --task-id m28 --workspace-path /repo --prompt "Break this in
 ```
 
 The response shape is `{ "plan": ..., "validation": ... }`, using the
-deterministic planner from `@plato/orchestration`.
+deterministic planner from `@bensigo/plato-orchestration`.
 
 To run the default delegated execution flow in one step, use:
 
@@ -174,5 +183,5 @@ Example local agent configuration:
 
 ## Development Notes
 
-- Run tests with `pnpm --filter @plato/cli test`.
-- Run type-checking with `pnpm --filter @plato/cli typecheck`.
+- Run tests with `pnpm --filter @bensigo/plato-cli test`.
+- Run type-checking with `pnpm --filter @bensigo/plato-cli typecheck`.

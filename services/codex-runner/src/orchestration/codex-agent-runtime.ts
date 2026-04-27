@@ -11,7 +11,7 @@ import type {
   OrchestrationTaskState,
   OrchestrationTaskResultRecord,
   StartOrchestrationTaskInput,
-} from "@plato/orchestration";
+} from "@bensigo/plato-orchestration";
 
 import type {
   CreateTaskGraphInput,

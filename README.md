@@ -9,12 +9,22 @@ The repo is split into user-facing applications in `apps/` and backend or infras
 After the npm packages are published, install Plato with:
 
 ```sh
-npm install -g @plato/cli
+npm install -g @bensigo/plato-cli
 ```
 
-Then choose the default Codex model for real tasks:
+The global install runs a non-fatal setup check. Plato includes the official
+Codex CLI package for auth and task execution; install Codex globally only if
+you also want the standalone `codex` command:
 
 ```sh
+npm install -g @openai/codex
+```
+
+Then log in with Codex/ChatGPT so real tasks use your subscription, and choose
+the default Codex model:
+
+```sh
+plato config auth-chatgpt
 plato config set-model gpt-5.4
 plato smoke
 ```
@@ -113,6 +123,13 @@ That means the repo already has the beginnings of a trustworthy execution layer,
 - Use a dedicated branch per milestone.
 - Push each milestone branch and open a PR before building the next step on top of it.
 - Keep tests and contracts close to the workspace that owns the behavior.
+
+## npm Publishing
+
+Pushes to `main` run `.github/workflows/npm-publish.yml`. The workflow tests the
+publishable packages, then publishes any package version that is not already on
+npm. Configure the repository secret `NPM_TOKEN` with a granular npm automation
+token that can publish the `@bensigo/*` packages.
 
 The current milestone path for the product is documented in [docs/milestones.md](/Users/macbook/work/plato/docs/milestones.md).
 

@@ -1,11 +1,11 @@
-import { TaskOrchestrationService } from "@plato/orchestration";
+import { TaskOrchestrationService } from "@bensigo/plato-orchestration";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type {
   CodexRunnerAgentRuntimeService,
   OperatorRuntimeOptions,
-} from "@plato/codex-runner";
+} from "@bensigo/plato-codex-runner";
 
 import {
   createPlatoMcpServer,
@@ -17,7 +17,7 @@ import type {
   AgentRuntimeSelector,
   CreateOrchestrationGraphInput,
   StartOrchestrationTaskInput,
-} from "@plato/orchestration";
+} from "@bensigo/plato-orchestration";
 
 export interface PlatoRuntimeOptions extends OperatorRuntimeOptions {
   runtimeId?: string;
@@ -42,7 +42,7 @@ export async function openPlatoRuntime(options: PlatoRuntimeOptions = {}): Promi
     : await openDefaultCodexRuntime(options);
 
   try {
-    const { CodexRunnerAgentRuntime } = await import("@plato/codex-runner");
+    const { CodexRunnerAgentRuntime } = await import("@bensigo/plato-codex-runner");
     const orchestrationRuntime = new CodexRunnerAgentRuntime({
       runtimeId,
       service: codexRuntime.service,
@@ -64,7 +64,7 @@ export async function openPlatoRuntime(options: PlatoRuntimeOptions = {}): Promi
 }
 
 async function openDefaultCodexRuntime(options: OperatorRuntimeOptions): Promise<PlatoCodexRuntime> {
-  const { openOperatorRuntime } = await import("@plato/codex-runner");
+  const { openOperatorRuntime } = await import("@bensigo/plato-codex-runner");
   const runtime = await openOperatorRuntime(options);
   return {
     service: runtime.service as unknown as CodexRunnerAgentRuntimeService,

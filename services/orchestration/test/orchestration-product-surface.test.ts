@@ -526,8 +526,8 @@ describe("OrchestrationProductSurface", () => {
         "services/orchestration/README.md",
       ],
       verificationCommands: [
-        "pnpm --filter @plato/orchestration test",
-        "pnpm --filter @plato/orchestration typecheck",
+        "pnpm --filter @bensigo/plato-orchestration test",
+        "pnpm --filter @bensigo/plato-orchestration typecheck",
       ],
     });
 
@@ -597,7 +597,7 @@ describe("OrchestrationProductSurface", () => {
         prompt: "Add MCP and CLI flags for validated task graph planning.",
         expectedPolicy: "CLI/MCP adapter",
         expectedScope: ["apps/plato-cli/src", "apps/plato-cli/test"],
-        expectedCommands: ["pnpm --filter @plato/cli test", "pnpm --filter @plato/cli typecheck"],
+        expectedCommands: ["pnpm --filter @bensigo/plato-cli test", "pnpm --filter @bensigo/plato-cli typecheck"],
         expectedCriteria: ["CLI and MCP adapter changes preserve neutral plato.* operation contracts."],
       },
       {
@@ -605,8 +605,8 @@ describe("OrchestrationProductSurface", () => {
         expectedPolicy: "Backend service",
         expectedScope: ["services/orchestration/src", "services/orchestration/test"],
         expectedCommands: [
-          "pnpm --filter @plato/orchestration test",
-          "pnpm --filter @plato/orchestration typecheck",
+          "pnpm --filter @bensigo/plato-orchestration test",
+          "pnpm --filter @bensigo/plato-orchestration typecheck",
         ],
         expectedCriteria: ["Service behavior is covered by focused tests at the owning service boundary."],
       },
@@ -614,7 +614,7 @@ describe("OrchestrationProductSurface", () => {
         prompt: "Update README documentation for orchestration planning.",
         expectedPolicy: "Documentation",
         expectedScope: ["README.md", "docs", "services/orchestration/README.md"],
-        expectedCommands: ["pnpm --filter @plato/orchestration typecheck"],
+        expectedCommands: ["pnpm --filter @bensigo/plato-orchestration typecheck"],
         expectedCriteria: ["Documentation names the affected user-facing or service contract accurately."],
       },
       {
@@ -705,7 +705,7 @@ describe("OrchestrationProductSurface", () => {
       workspacePath: "/repo",
       prompt: "Add CLI output for plan validation.",
       writeScopePaths: ["apps/plato-cli/src/index.ts", "apps/plato-cli/test/plato-cli.test.ts"],
-      verificationCommands: ["pnpm --filter @plato/cli lint"],
+      verificationCommands: ["pnpm --filter @bensigo/plato-cli lint"],
     });
     const implementation = plan.children.find((child) => child.taskId === "custom-cli-implementation");
 
@@ -716,9 +716,9 @@ describe("OrchestrationProductSurface", () => {
       },
       verification: {
         commands: expect.arrayContaining([
-          "pnpm --filter @plato/cli lint",
-          "pnpm --filter @plato/cli test",
-          "pnpm --filter @plato/cli typecheck",
+          "pnpm --filter @bensigo/plato-cli lint",
+          "pnpm --filter @bensigo/plato-cli test",
+          "pnpm --filter @bensigo/plato-cli typecheck",
         ]),
       },
     });
@@ -1139,7 +1139,7 @@ function buildPlan(
         writeScope: { paths: ["services/orchestration/src", "services/orchestration/test"] },
         allowedToolNames: ["search_repo", "read_file", "apply_patch", "run_tests"],
         verification: {
-          commands: ["pnpm --filter @plato/orchestration test"],
+          commands: ["pnpm --filter @bensigo/plato-orchestration test"],
           acceptanceCriteria: ["Plan validation rejects incomplete worker briefs."],
         },
         riskLevel: "medium",
@@ -1169,7 +1169,7 @@ function buildPlan(
         writeScope: { paths: ["apps/plato-cli/src", "apps/plato-cli/test"] },
         allowedToolNames: ["search_repo", "read_file", "apply_patch", "run_tests"],
         verification: {
-          commands: ["pnpm --filter @plato/cli test"],
+          commands: ["pnpm --filter @bensigo/plato-cli test"],
           acceptanceCriteria: ["CLI and MCP planning commands are read-only."],
         },
         riskLevel: "medium",

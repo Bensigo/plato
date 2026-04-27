@@ -1,6 +1,6 @@
 {
-  "name": "@plato/codex-runner",
-  "version": "0.1.0",
+  "name": "@bensigo/plato-codex-runner",
+  "version": "0.1.2",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -19,7 +19,7 @@
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "bin": {
-    "codex-runner": "./dist/src/cli.js"
+    "codex-runner": "dist/src/cli.js"
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
@@ -35,9 +35,10 @@
     "vitest": "^4.1.4"
   },
   "dependencies": {
-    "@plato/db": "workspace:*",
-    "@plato/config": "workspace:*",
-    "@plato/orchestration": "workspace:*",
+    "@bensigo/plato-db": "workspace:*",
+    "@bensigo/plato-config": "workspace:*",
+    "@bensigo/plato-orchestration": "workspace:*",
+    "@openai/codex": "^0.125.0",
     "@openai/codex-sdk": "^0.123.0"
   }
 }

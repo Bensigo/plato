@@ -7,6 +7,7 @@
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
     "lint": "turbo run lint",
+    "publish:npm": "node scripts/publish-npm.mjs",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck"
   },

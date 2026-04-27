@@ -1,6 +1,6 @@
 {
-  "name": "@plato/cli",
-  "version": "0.1.0",
+  "name": "@bensigo/plato-cli",
+  "version": "0.1.3",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -17,8 +17,8 @@
     }
   },
   "bin": {
-    "plato": "./dist/src/cli.js",
-    "plato-mcp": "./dist/src/mcp.js"
+    "plato": "dist/src/cli.js",
+    "plato-mcp": "dist/src/mcp.js"
   },
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
@@ -26,6 +26,7 @@
     "build": "tsc --project tsconfig.json",
     "dev": "echo 'plato cli dev not wired yet'",
     "lint": "oxlint .",
+    "postinstall": "node dist/src/postinstall.js",
     "prepack": "npm run build",
     "smoke": "pnpm build && node dist/src/cli.js smoke",
     "test": "vitest run --dir test",
@@ -33,8 +34,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@plato/codex-runner": "workspace:*",
-    "@plato/orchestration": "workspace:*",
+    "@bensigo/plato-codex-runner": "workspace:*",
+    "@bensigo/plato-orchestration": "workspace:*",
     "zod": "^4.3.6"
   },
   "devDependencies": {
