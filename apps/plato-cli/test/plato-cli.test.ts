@@ -256,7 +256,7 @@ describe("plato product surface", () => {
           },
           {
             taskId: "m28-implementation",
-            writeScope: { paths: ["/repo"] },
+            writeScope: { paths: ["services"] },
             allowedToolNames: expect.arrayContaining([
               "context7.resolve_library",
               "context7.get_docs",

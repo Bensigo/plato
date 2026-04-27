@@ -944,7 +944,7 @@ function selectTaskDecompositionPolicy(input: OrchestrationTaskPlanningInput): T
   if (hasAnyPolicySignal(haystack, ["mcp", "cli", "command", "plato-cli", "apps/plato-cli"])) {
     return TASK_DECOMPOSITION_POLICIES.cli_mcp;
   }
-  if (hasAnyPolicySignal(haystack, ["frontend", "ui", "ux", "desktop", "react", "view", "screen", "apps/desktop"])) {
+  if (hasAnyPolicySignal(haystack, ["frontend", "ui", "ux", "desktop", "react", "screen", "apps/desktop"])) {
     return TASK_DECOMPOSITION_POLICIES.frontend;
   }
   if (
