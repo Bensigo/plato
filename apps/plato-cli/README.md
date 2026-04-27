@@ -70,6 +70,18 @@ plato graph start-plan --plan-json "$PLAN_JSON"
 
 Invalid plans return validation issues and do not start a graph.
 
+Worker result inspection stays on the same neutral orchestration surface. Use
+the CLI to inspect the per-worker result records and final parent synthesis for
+a graph:
+
+```sh
+plato graph results --task-id m30
+```
+
+MCP clients can read the same snapshot through
+`plato.get_task_graph_results` or `plato://graphs/{taskId}/results`. The
+response shape is `{ "parentTaskId": ..., "results": [...], "synthesis": ... }`.
+
 To convert a reviewed plan into graph input for execution, use:
 
 ```sh

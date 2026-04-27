@@ -251,6 +251,7 @@ export interface AgentRuntime {
   getTask(taskId: string): Promise<OrchestrationTaskRecord | undefined>;
   getTaskGraph(taskId: string): Promise<OrchestrationTaskGraphSnapshot | undefined>;
   getTaskGraphResults?(taskId: string): Promise<OrchestrationTaskGraphResultSnapshot | undefined>;
+  reconcileTaskGraphResults?(taskId: string): Promise<OrchestrationTaskGraphResultSnapshot | undefined>;
   listTasks(): Promise<OrchestrationTaskRecord[]>;
   listEvents(taskId: string): Promise<OrchestrationEvent[]>;
   interruptTask(taskId: string): Promise<void>;
@@ -348,6 +349,9 @@ export class TaskOrchestrationService {
     selector?: AgentRuntimeSelector,
   ): Promise<OrchestrationTaskGraphResultSnapshot | undefined> {
     const runtime = selector ? this.#runtimeFor(selector) : await this.#resolveRuntimeForTask(taskId);
+    if (runtime.reconcileTaskGraphResults) {
+      return runtime.reconcileTaskGraphResults(taskId);
+    }
     return runtime.getTaskGraphResults?.(taskId) ?? Promise.resolve(undefined);
   }
 

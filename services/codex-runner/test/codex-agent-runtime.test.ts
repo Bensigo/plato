@@ -125,11 +125,66 @@ describe("CodexRunnerAgentRuntime", () => {
       },
     ]);
   });
+
+  it("adapts reconciled graph results before product-surface inspection", async () => {
+    const service = new FakeCodexRunnerService();
+    service.reconciledGraphResults.set("task-parent", {
+      parentTaskId: "task-parent",
+      results: [
+        {
+          resultId: "result-task-child",
+          taskId: "task-child",
+          parentTaskId: "task-parent",
+          classification: "conflicted",
+          summary: "Workers produced conflicting edits.",
+        },
+      ],
+      synthesis: {
+        synthesisId: "synthesis-task-parent",
+        parentTaskId: "task-parent",
+        classification: "conflicted",
+        summary: "Parent synthesis found conflicting child results.",
+        childTaskCount: 1,
+        resultIds: ["result-task-child"],
+      },
+    });
+    const runtime = new CodexRunnerAgentRuntime({
+      runtimeId: "codex-local",
+      service,
+    });
+
+    await expect(runtime.reconcileTaskGraphResults("task-parent")).resolves.toEqual({
+      parentTaskId: "task-parent",
+      results: [
+        {
+          resultId: "result-task-child",
+          taskId: "task-child",
+          parentTaskId: "task-parent",
+          classification: "conflicted",
+          summary: "Workers produced conflicting edits.",
+          errorCode: undefined,
+          metadata: undefined,
+        },
+      ],
+      synthesis: {
+        synthesisId: "synthesis-task-parent",
+        parentTaskId: "task-parent",
+        classification: "conflicted",
+        summary: "Parent synthesis found conflicting child results.",
+        childTaskCount: 1,
+        resultIds: ["result-task-child"],
+        metadata: undefined,
+      },
+    });
+    expect(service.reconciledGraphResultTaskIds).toEqual(["task-parent"]);
+  });
 });
 
 class FakeCodexRunnerService implements CodexRunnerAgentRuntimeService {
   readonly started: StartTaskInput[] = [];
   readonly createdGraphs: CreateTaskGraphInput[] = [];
+  readonly reconciledGraphResultTaskIds: string[] = [];
+  readonly reconciledGraphResults = new Map<string, RunnerTaskGraphResultSnapshot>();
   events: SessionEvent[] = [];
 
   async startTask(input: StartTaskInput): Promise<RunnerTaskRecord> {
@@ -166,6 +221,11 @@ class FakeCodexRunnerService implements CodexRunnerAgentRuntimeService {
 
   async getTaskGraphResults(): Promise<RunnerTaskGraphResultSnapshot | undefined> {
     return undefined;
+  }
+
+  async reconcileTaskGraphResults(taskId: string): Promise<RunnerTaskGraphResultSnapshot | undefined> {
+    this.reconciledGraphResultTaskIds.push(taskId);
+    return this.reconciledGraphResults.get(taskId);
   }
 
   async listTasks(): Promise<RunnerTaskRecord[]> {
