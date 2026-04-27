@@ -621,7 +621,9 @@ export class CodexRunnerService {
     allocation: WorktreeAllocation,
     eventType: "task.started" | "task.resumed",
   ): Promise<RunnerTaskRecord> {
+    const contextPackage = await this.#store.getContextPackage(task.taskId);
     const session = await this.#agentSession.start(task, allocation, {
+      contextPackage,
       onExit: async (exitCode) => {
         await this.#handleSessionExit(task.taskId, session.sessionId, allocation.worktreePath, exitCode);
       },

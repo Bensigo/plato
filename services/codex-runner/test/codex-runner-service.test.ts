@@ -181,6 +181,7 @@ class FakeAgentSession implements AgentSession {
     taskId: string;
     worktreePath: string;
     sessionId: string;
+    contextPackage?: ContextPackageRecord;
   }[] = [];
   readonly interrupted: string[] = [];
   readonly #exitHandlers = new Map<string, (exitCode: number | null) => Promise<void> | void>();
@@ -188,13 +189,14 @@ class FakeAgentSession implements AgentSession {
   async start(
     task: RunnerTaskRecord,
     worktree: WorktreeAllocation,
-    handlers?: { onExit?: (exitCode: number | null) => Promise<void> | void },
+    handlers?: { contextPackage?: ContextPackageRecord; onExit?: (exitCode: number | null) => Promise<void> | void },
   ): Promise<ManagedSession> {
     const sessionId = `session-${this.started.length + 1}`;
     this.started.push({
       taskId: task.taskId,
       worktreePath: worktree.worktreePath,
       sessionId,
+      contextPackage: handlers?.contextPackage,
     });
 
     if (handlers?.onExit) {
@@ -476,6 +478,92 @@ describe("CodexRunnerService", () => {
       sources: [buildContextSource()],
       artifacts: [buildContextArtifact()],
     });
+  });
+
+  it("passes the persisted context package into the started agent session", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.startTask({
+      taskId: "task-1",
+      repoPath: "/repo",
+      prompt: "Use context",
+      contextPackage: {
+        summary: "Execution context summary",
+        sources: [buildContextSource()],
+        artifacts: [buildContextArtifact()],
+      },
+    });
+
+    expect(agentSession.started).toMatchObject([
+      {
+        taskId: "task-1",
+        contextPackage: {
+          taskId: "task-1",
+          summary: "Execution context summary",
+          sources: [buildContextSource()],
+          artifacts: [buildContextArtifact()],
+        },
+      },
+    ]);
+  });
+
+  it("passes a graph child context package into the worker session", async () => {
+    const store = new InMemoryRunnerStore();
+    const sessionStore = new InMemorySessionStore();
+    const logStreamer = new InMemoryLogStreamer();
+    const worktreeManager = new FakeWorktreeManager();
+    const agentSession = new FakeAgentSession();
+    const service = new CodexRunnerService({
+      store,
+      sessionStore,
+      logStreamer,
+      worktreeManager,
+      maxConcurrentTasks: 1,
+      agentSessionFactory: new FakeAgentSessionFactory(agentSession),
+    });
+
+    await service.createTaskGraph({
+      parent: {
+        taskId: "task-parent",
+        repoPath: "/repo",
+        prompt: "Coordinate",
+      },
+      children: [
+        {
+          taskId: "task-child",
+          prompt: "Do the work",
+          contextPackage: {
+            summary: "Child worker context",
+            sources: [buildContextSource()],
+            artifacts: [buildContextArtifact()],
+          },
+        },
+      ],
+    });
+
+    expect(agentSession.started).toMatchObject([
+      {
+        taskId: "task-child",
+        contextPackage: {
+          taskId: "task-child",
+          summary: "Child worker context",
+          sources: [buildContextSource()],
+          artifacts: [buildContextArtifact()],
+        },
+      },
+    ]);
   });
 
   it("clears stale context when a task is re-admitted without a context package", async () => {

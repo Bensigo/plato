@@ -316,6 +316,7 @@ export interface WorktreeManager {
 }
 
 export interface AgentSessionHandlers {
+  contextPackage?: ContextPackageRecord;
   onExit?: (exitCode: number | null) => Promise<void> | void;
 }
 

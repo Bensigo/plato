@@ -6,6 +6,7 @@ import type {
   AgentSession,
   AgentSessionFactory,
   AgentSessionHandlers,
+  ContextPackageRecord,
   LogStreamer,
   ManagedSession,
   RunnerTaskRecord,
@@ -90,9 +91,12 @@ export class CodexSdkBackedAgentSession implements AgentSession {
     let terminalExitCode: number | null | undefined;
 
     try {
-      const { events } = await thread.runStreamed(task.prompt, {
-        signal: abortController.signal,
-      });
+      const { events } = await thread.runStreamed(
+        renderTaskPrompt(task.prompt, handlers?.contextPackage),
+        {
+          signal: abortController.signal,
+        },
+      );
 
       for await (const event of events) {
         if (
@@ -202,6 +206,57 @@ export class CodexSdkBackedAgentSession implements AgentSession {
         return "";
     }
   }
+}
+
+function renderTaskPrompt(prompt: string, contextPackage?: ContextPackageRecord): string {
+  if (!contextPackage) {
+    return prompt;
+  }
+
+  const sections = [
+    prompt,
+    "",
+    "## Plato Context Package",
+    ...(contextPackage.summary ? ["", contextPackage.summary] : []),
+  ];
+
+  if (contextPackage.sources.length > 0) {
+    sections.push("", "### Sources");
+    for (const source of contextPackage.sources) {
+      sections.push(
+        `- ${source.label} (${source.kind}, ${source.sourceId})`,
+        `  URI: ${source.uri}`,
+        ...(source.summary ? [`  Summary: ${source.summary}`] : []),
+      );
+    }
+  }
+
+  if (contextPackage.artifacts.length > 0) {
+    sections.push("", "### Artifacts");
+    for (const artifact of contextPackage.artifacts) {
+      sections.push(
+        `#### ${artifact.label}`,
+        `Artifact ID: ${artifact.artifactId}`,
+        `Kind: ${artifact.kind}`,
+        `MIME: ${artifact.mimeType}`,
+        ...(artifact.summary ? [`Summary: ${artifact.summary}`] : []),
+        "",
+        fenceFor(artifact.content),
+        artifact.content,
+        fenceFor(artifact.content),
+      );
+    }
+  }
+
+  return sections.join("\n");
+}
+
+function fenceFor(content: string): string {
+  let fence = "```";
+  while (content.includes(fence)) {
+    fence += "`";
+  }
+  return fence;
 }
 
 export class CodexSdkBackedAgentSessionFactory implements AgentSessionFactory {
