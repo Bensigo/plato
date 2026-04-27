@@ -48,6 +48,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build publishable packages
+        run: |
+          pnpm --filter @bensigo/plato-orchestration build
+          pnpm --filter @bensigo/plato-config build
+          pnpm --filter @bensigo/plato-db build
+          pnpm --filter @bensigo/plato-codex-runner build
+          pnpm --filter @bensigo/plato-cli build
+
       - name: Test publishable packages
         run: |
           pnpm --filter @bensigo/plato-orchestration test
