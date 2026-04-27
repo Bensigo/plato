@@ -21,6 +21,7 @@ import type {
   AgentRuntimeSelector,
   CreateOrchestrationGraphInput,
   OrchestrationEvent,
+  OrchestrationTaskDecompositionPlan,
   OrchestrationTaskGraphResultSnapshot,
   OrchestrationTaskGraphSnapshot,
   OrchestrationTaskRecord,
@@ -107,6 +108,46 @@ describe("plato product surface", () => {
     expect(JSON.parse(stdout.text)).toMatchObject({
       parent: { taskId: "parent" },
       children: [{ taskId: "child" }],
+    });
+  });
+
+  it("plans and validates task graphs without starting execution", async () => {
+    const client = new FakeOrchestrationClient();
+    const plan = buildTaskGraphPlan();
+    const planStdout = new MemoryStream();
+    const validateStdout = new MemoryStream();
+
+    await expect(
+      runPlatoCli(["graph", "plan", "--plan-json", JSON.stringify(plan)], {
+        client,
+        stdout: planStdout,
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      runPlatoCli(["graph", "validate", "--plan-json", JSON.stringify(plan)], {
+        client,
+        stdout: validateStdout,
+      }),
+    ).resolves.toBe(0);
+
+    expect(client.createdGraphs).toEqual([]);
+    expect(JSON.parse(planStdout.text)).toMatchObject({
+      plan: {
+        planId: "m28-plan",
+        parent: { taskId: "parent", agent: { runtimeId: "codex-local" } },
+        children: [{ taskId: "child-a" }, { taskId: "child-b" }],
+      },
+      validation: { valid: true, issues: [] },
+    });
+    expect(JSON.parse(validateStdout.text)).toMatchObject({
+      validation: { valid: true, issues: [] },
+      graphInput: {
+        parent: { taskId: "parent", agent: { runtimeId: "codex-local" } },
+        children: [
+          { taskId: "child-a", prompt: "Implement contracts." },
+          { taskId: "child-b", prompt: "Expose CLI.", dependencyTaskIds: ["child-a"] },
+        ],
+      },
     });
   });
 
@@ -260,7 +301,13 @@ describe("plato product surface", () => {
       ]);
 
       const tools = await client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toContain("plato.list_tasks");
+      expect(tools.tools.map((tool) => tool.name)).toEqual(
+        expect.arrayContaining([
+          "plato.list_tasks",
+          "plato.plan_task_graph",
+          "plato.validate_task_graph_plan",
+        ]),
+      );
 
       const result = await client.callTool({
         name: "plato.list_tasks",
@@ -268,6 +315,29 @@ describe("plato product surface", () => {
       });
       const content = result.content as Array<{ type: string; text?: string }>;
       expect(JSON.parse(content[0]?.type === "text" ? content[0].text ?? "null" : "null")).toEqual([]);
+
+      const planResult = await client.callTool({
+        name: "plato.plan_task_graph",
+        arguments: buildTaskGraphPlan() as unknown as Record<string, unknown>,
+      });
+      const planContent = planResult.content as Array<{ type: string; text?: string }>;
+      expect(JSON.parse(planContent[0]?.type === "text" ? planContent[0].text ?? "null" : "null"))
+        .toMatchObject({
+          plan: { planId: "m28-plan" },
+          validation: { valid: true, issues: [] },
+        });
+
+      const validationResult = await client.callTool({
+        name: "plato.validate_task_graph_plan",
+        arguments: { plan: buildTaskGraphPlan() as unknown as Record<string, unknown> },
+      });
+      const validationContent = validationResult.content as Array<{ type: string; text?: string }>;
+      expect(JSON.parse(
+        validationContent[0]?.type === "text" ? validationContent[0].text ?? "null" : "null",
+      )).toMatchObject({
+        validation: { valid: true, issues: [] },
+        graphInput: { parent: { taskId: "parent" } },
+      });
     } finally {
       await client.close();
       await server.close();
@@ -581,6 +651,61 @@ function buildTask(
       backend: "fake",
       backendTaskId: taskId,
     },
+  };
+}
+
+function buildTaskGraphPlan(): OrchestrationTaskDecompositionPlan {
+  return {
+    planId: "m28-plan",
+    summary: "Reviewable M28 task graph plan.",
+    parent: {
+      taskId: "parent",
+      workspacePath: "/repo",
+      prompt: "Coordinate M28.",
+      agent: { runtimeId: "codex-local" },
+    },
+    documentation: [
+      {
+        requirementId: "context7",
+        label: "Context7",
+        reason: "Confirm current documentation lookup behavior.",
+        sources: [
+          {
+            sourceId: "context7-docs",
+            kind: "context7",
+            label: "Context7 docs",
+            uri: "context7://docs",
+          },
+        ],
+      },
+    ],
+    children: [
+      {
+        taskId: "child-a",
+        prompt: "Implement contracts.",
+        objective: "Define decomposition plan contracts.",
+        writeScope: { paths: ["services/orchestration"] },
+        allowedToolNames: ["search_repo", "read_file", "apply_patch", "run_tests"],
+        verification: {
+          commands: ["pnpm --filter @plato/orchestration test"],
+          acceptanceCriteria: ["Plan validation is deterministic."],
+        },
+        riskLevel: "medium",
+      },
+      {
+        taskId: "child-b",
+        prompt: "Expose CLI.",
+        objective: "Expose read-only planning and validation commands.",
+        dependencyTaskIds: ["child-a"],
+        writeScope: { paths: ["apps/plato-cli"] },
+        allowedToolNames: ["search_repo", "read_file", "apply_patch", "run_tests"],
+        verification: {
+          commands: ["pnpm --filter @plato/cli test"],
+          acceptanceCriteria: ["CLI planning commands do not start execution."],
+        },
+        riskLevel: "medium",
+      },
+    ],
   };
 }
 

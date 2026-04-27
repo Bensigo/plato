@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   OrchestrationProductSurface,
   TaskOrchestrationService,
+  validateTaskDecompositionPlan,
   type AgentRuntime,
   type CreateOrchestrationGraphInput,
   type OrchestrationEvent,
+  type OrchestrationTaskDecompositionPlan,
   type OrchestrationTaskGraphResultSnapshot,
   type OrchestrationTaskGraphSnapshot,
   type OrchestrationTaskRecord,
@@ -31,6 +33,16 @@ describe("OrchestrationProductSurface", () => {
         expect.objectContaining({
           name: "plato.get_task_graph_results",
           operation: "get_task_graph_results",
+          readOnly: true,
+        }),
+        expect.objectContaining({
+          name: "plato.plan_task_graph",
+          operation: "plan_task_graph",
+          readOnly: true,
+        }),
+        expect.objectContaining({
+          name: "plato.validate_task_graph_plan",
+          operation: "validate_task_graph_plan",
           readOnly: true,
         }),
         expect.objectContaining({
@@ -234,7 +246,212 @@ describe("OrchestrationProductSurface", () => {
       ],
     });
   });
+
+  it("returns and validates reviewable task graph plans without starting execution", async () => {
+    const runtime = new SurfaceFakeRuntime("default-agent", "test-agent");
+    const surface = new OrchestrationProductSurface(
+      new TaskOrchestrationService({
+        defaultRuntimeId: runtime.runtimeId,
+        runtimes: [runtime],
+      }),
+    );
+    const plan = buildPlan();
+
+    await expect(surface.planTaskGraph(plan)).resolves.toEqual({
+      plan,
+      validation: { valid: true, issues: [] },
+    });
+    await expect(surface.validateTaskGraphPlan({ plan })).resolves.toEqual({
+      validation: { valid: true, issues: [] },
+      graphInput: {
+        parent: plan.parent,
+        children: [
+          {
+            taskId: "child-a",
+            workspacePath: undefined,
+            prompt: "Implement the neutral planning contract and validation tests.",
+            priority: undefined,
+            dependencyTaskIds: undefined,
+            contextPackage: undefined,
+          },
+          {
+            taskId: "child-b",
+            workspacePath: undefined,
+            prompt: "Expose the planning surface through CLI and MCP handlers.",
+            priority: undefined,
+            dependencyTaskIds: ["child-a"],
+            contextPackage: undefined,
+          },
+        ],
+      },
+    });
+
+    expect(runtime.startedTaskIds).toEqual([]);
+    expect(runtime.createdGraphParentIds).toEqual([]);
+  });
+
+  it("validates decomposition quality before graph execution", () => {
+    const plan = buildPlan({
+      children: [
+        {
+          ...buildPlan().children[0],
+          taskId: "child-a",
+          dependencyTaskIds: ["child-b", "child-b"],
+          writeScope: { paths: [] },
+          allowedToolNames: [],
+          verification: { commands: [], acceptanceCriteria: [] },
+          requiredDocumentation: [
+            {
+              requirementId: "docs-1",
+              label: "Vitest",
+              reason: "Confirm current test API usage.",
+              sources: [],
+            },
+          ],
+        },
+        {
+          ...buildPlan().children[1],
+          taskId: "child-b",
+          dependencyTaskIds: ["missing-child"],
+          requiredDocumentation: [
+            {
+              requirementId: "docs-2",
+              label: "MCP",
+              reason: "Confirm current tool registration behavior.",
+              sources: [
+                {
+                  sourceId: "mcp-docs",
+                  kind: "url",
+                  label: "MCP tools",
+                  uri: "https://modelcontextprotocol.io/specification/draft/server/tools",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(validateTaskDecompositionPlan(plan)).toEqual({
+      valid: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: "WRITE_SCOPE_REQUIRED", taskId: "child-a" }),
+        expect.objectContaining({ code: "ALLOWED_TOOLS_REQUIRED", taskId: "child-a" }),
+        expect.objectContaining({ code: "VERIFICATION_REQUIRED", taskId: "child-a" }),
+        expect.objectContaining({ code: "DUPLICATE_DEPENDENCY", taskId: "child-a" }),
+        expect.objectContaining({ code: "DOCUMENTATION_EVIDENCE_REQUIRED", taskId: "child-a" }),
+        expect.objectContaining({ code: "MISSING_DEPENDENCY", taskId: "child-b" }),
+        expect.objectContaining({
+          severity: "warning",
+          code: "CONTEXT7_SOURCE_RECOMMENDED",
+          taskId: "child-b",
+        }),
+      ]),
+    });
+  });
+
+  it("rejects blank nested boundary, verification, and documentation evidence fields", () => {
+    const plan = buildPlan({
+      children: [
+        {
+          ...buildPlan().children[0],
+          writeScope: { paths: [" "] },
+          allowedToolNames: [" "],
+          verification: {
+            commands: [" "],
+            acceptanceCriteria: [" "],
+          },
+          requiredDocumentation: [
+            {
+              requirementId: "docs-1",
+              label: "Docs",
+              reason: "Confirm current API behavior.",
+              sources: [
+                {
+                  sourceId: " ",
+                  kind: "context7",
+                  label: " ",
+                  uri: " ",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(validateTaskDecompositionPlan(plan)).toMatchObject({
+      valid: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: "WRITE_SCOPE_PATH_REQUIRED", taskId: "child-a" }),
+        expect.objectContaining({ code: "ALLOWED_TOOL_NAME_REQUIRED", taskId: "child-a" }),
+        expect.objectContaining({ code: "VERIFICATION_COMMAND_REQUIRED", taskId: "child-a" }),
+        expect.objectContaining({ code: "ACCEPTANCE_CRITERION_REQUIRED", taskId: "child-a" }),
+        expect.objectContaining({ code: "DOCUMENTATION_SOURCE_ID_REQUIRED", taskId: "child-a" }),
+        expect.objectContaining({ code: "DOCUMENTATION_SOURCE_LABEL_REQUIRED", taskId: "child-a" }),
+        expect.objectContaining({ code: "DOCUMENTATION_SOURCE_URI_REQUIRED", taskId: "child-a" }),
+      ]),
+    });
+  });
 });
+
+function buildPlan(
+  overrides: Partial<OrchestrationTaskDecompositionPlan> = {},
+): OrchestrationTaskDecompositionPlan {
+  return {
+    planId: "m28-plan",
+    summary: "Reviewable M28 task decomposition plan.",
+    parent: {
+      taskId: "parent",
+      workspacePath: "/repo",
+      prompt: "Implement M28 task decomposition planning.",
+    },
+    children: [
+      {
+        taskId: "child-a",
+        prompt: "Implement the neutral planning contract and validation tests.",
+        objective: "Define reviewable task graph plans before execution.",
+        writeScope: { paths: ["services/orchestration/src", "services/orchestration/test"] },
+        allowedToolNames: ["search_repo", "read_file", "apply_patch", "run_tests"],
+        verification: {
+          commands: ["pnpm --filter @plato/orchestration test"],
+          acceptanceCriteria: ["Plan validation rejects incomplete worker briefs."],
+        },
+        riskLevel: "medium",
+        requiredDocumentation: [
+          {
+            requirementId: "context7-docs",
+            label: "Context7",
+            reason: "Confirm documentation lookup policy before planning framework-specific work.",
+            sources: [
+              {
+                sourceId: "context7",
+                kind: "context7",
+                label: "Context7 docs",
+                uri: "context7://docs",
+                summary: "Context7 provides current library documentation.",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        taskId: "child-b",
+        prompt: "Expose the planning surface through CLI and MCP handlers.",
+        objective: "Return and validate plans without starting graph execution.",
+        dependencyTaskIds: ["child-a"],
+        writeScope: { paths: ["apps/plato-cli/src", "apps/plato-cli/test"] },
+        allowedToolNames: ["search_repo", "read_file", "apply_patch", "run_tests"],
+        verification: {
+          commands: ["pnpm --filter @plato/cli test"],
+          acceptanceCriteria: ["CLI and MCP planning commands are read-only."],
+        },
+        riskLevel: "medium",
+      },
+    ],
+    ...overrides,
+  };
+}
 
 class SurfaceFakeRuntime implements AgentRuntime {
   readonly startedTaskIds: string[] = [];
