@@ -4,6 +4,7 @@ import type {
   OrchestrationPlanValidationIssue,
   OrchestrationPlanValidationResult,
   OrchestrationTaskDecompositionPlan,
+  OrchestrationTaskPlanningInput,
   OrchestrationToolHarnessCatalog,
   OrchestrationToolHarnessDescriptor,
   PlannedOrchestrationGraphChildInput,
@@ -149,6 +150,207 @@ export function createGraphInputFromDecompositionPlan(
       contextPackage: child.contextPackage,
     })),
   };
+}
+
+export interface CreateTaskDecompositionPlanOptions {
+  toolCatalog?: OrchestrationToolHarnessCatalog;
+}
+
+export function createTaskDecompositionPlan(
+  input: OrchestrationTaskPlanningInput,
+  options: CreateTaskDecompositionPlanOptions = {},
+): OrchestrationTaskDecompositionPlan {
+  const writeScopePaths = normalizeWriteScopePaths(input.writeScopePaths, input.workspacePath);
+  const verificationCommands = uniqueValues([
+    ...(input.verificationCommands ?? []),
+    "pnpm --filter @plato/orchestration test",
+    "pnpm --filter @plato/orchestration typecheck",
+    "pnpm --filter @plato/orchestration lint",
+  ]);
+  const acceptanceCriteria = uniqueValues([
+    ...(input.acceptanceCriteria ?? []),
+    "The decomposition plan validates with validateTaskDecompositionPlan before graph creation.",
+    "Worker prompts state write boundaries, allowed tools, dependencies, Context7 expectations, verification, review, and PR steps.",
+    "The planner is read-only and does not start runtime tasks or create task graphs.",
+  ]);
+  const documentation = input.documentation?.length
+    ? copyDocumentationRequirements(input.documentation)
+    : [context7DocumentationRequirement(input.milestoneId)];
+  const planId = input.planId?.trim() || `${input.taskId}-decomposition-plan`;
+  const summary =
+    input.summary?.trim() ||
+    `Reviewable deterministic decomposition plan for ${input.milestoneId ?? input.taskId}.`;
+  const childTaskIds = {
+    preflight: `${input.taskId}-preflight`,
+    implementation: `${input.taskId}-implementation`,
+    review: `${input.taskId}-review`,
+  };
+
+  const baseContext = [
+    `Top-level task: ${input.prompt}`,
+    `Workspace: ${input.workspacePath}`,
+    `Milestone: ${input.milestoneId ?? "unspecified"}`,
+    `Write boundary: ${writeScopePaths.join(", ")}`,
+    `Context7 requirement: resolve relevant libraries and record docs or explicit gaps before implementation.`,
+    `Review requirement: keep work PR-sized, push the milestone branch, and open a pull request after verification.`,
+  ].join("\n");
+
+  const children: PlannedOrchestrationGraphChildInput[] = [
+    {
+      taskId: childTaskIds.preflight,
+      workspacePath: input.workspacePath,
+      prompt: workerPrompt({
+        title: "Preflight and contract discovery",
+        task: input.prompt,
+        boundaries: writeScopePaths,
+        allowedTools: ["inspect_workspace", "search_repo", "read_file", "read_contract", "list_tests"],
+        dependencies: [],
+        context7: documentation,
+        verificationCommands: [],
+        acceptanceCriteria: [
+          "Identify the owning workspace, contracts, tests, and local AGENTS.md instructions.",
+          "Record required Context7 documentation lookups or explicit gaps before implementation starts.",
+          "Do not modify files during preflight.",
+        ],
+        reviewSteps: ["Report scope, risks, and proposed child execution order for review."],
+      }),
+      objective: "Discover workspace contracts, boundaries, docs needs, and verification commands before execution.",
+      writeScope: { paths: writeScopePaths, exclusive: false },
+      allowedToolNames: ["inspect_workspace", "search_repo", "read_file", "read_contract", "list_tests"],
+      verification: {
+        commands: [],
+        acceptanceCriteria: [
+          "Preflight notes identify relevant contracts, workspace rules, tests, and Context7 documentation needs.",
+        ],
+      },
+      riskLevel: "low",
+      requiredDocumentation: documentation,
+      contextPackage: contextPackageForChild("preflight", baseContext),
+    },
+    {
+      taskId: childTaskIds.implementation,
+      workspacePath: input.workspacePath,
+      prompt: workerPrompt({
+        title: "Scoped implementation",
+        task: input.prompt,
+        boundaries: writeScopePaths,
+        allowedTools: [
+          "inspect_workspace",
+          "search_repo",
+          "read_file",
+          "read_contract",
+          "context7.resolve_library",
+          "context7.get_docs",
+          "apply_patch",
+          "run_tests",
+          "run_typecheck",
+        ],
+        dependencies: [childTaskIds.preflight],
+        context7: documentation,
+        verificationCommands,
+        acceptanceCriteria,
+        reviewSteps: [
+          "Keep changes inside the declared write boundary.",
+          "Preserve unrelated edits from other agents.",
+          "Summarize changed paths and verification results for reviewer handoff.",
+        ],
+      }),
+      objective: "Implement the task inside the declared boundaries using preflight findings and current docs.",
+      dependencyTaskIds: [childTaskIds.preflight],
+      writeScope: { paths: writeScopePaths, exclusive: true },
+      allowedToolNames: [
+        "inspect_workspace",
+        "search_repo",
+        "read_file",
+        "read_contract",
+        "context7.resolve_library",
+        "context7.get_docs",
+        "apply_patch",
+        "run_tests",
+        "run_typecheck",
+      ],
+      verification: {
+        commands: verificationCommands,
+        acceptanceCriteria,
+      },
+      riskLevel: "medium",
+      requiredDocumentation: documentation,
+      contextPackage: contextPackageForChild("implementation", baseContext),
+    },
+    {
+      taskId: childTaskIds.review,
+      workspacePath: input.workspacePath,
+      prompt: workerPrompt({
+        title: "Verification, review, and PR handoff",
+        task: input.prompt,
+        boundaries: writeScopePaths,
+        allowedTools: [
+          "search_repo",
+          "read_file",
+          "run_tests",
+          "run_typecheck",
+          "request_review",
+          "git.push",
+          "github.open_pr",
+        ],
+        dependencies: [childTaskIds.implementation],
+        context7: documentation,
+        verificationCommands,
+        acceptanceCriteria,
+        reviewSteps: [
+          "Run targeted tests, typecheck, and lint when available.",
+          "Request review before publishing if verification is incomplete or risky.",
+          "Push the milestone branch and open a pull request with test notes.",
+        ],
+      }),
+      objective: "Verify implementation results, prepare reviewer context, and publish the milestone PR.",
+      dependencyTaskIds: [childTaskIds.implementation],
+      writeScope: { paths: writeScopePaths, exclusive: false },
+      allowedToolNames: [
+        "search_repo",
+        "read_file",
+        "run_tests",
+        "run_typecheck",
+        "request_review",
+        "git.push",
+        "github.open_pr",
+      ],
+      verification: {
+        commands: verificationCommands,
+        acceptanceCriteria: [
+          ...acceptanceCriteria,
+          "Milestone branch is pushed and a pull request is opened for review.",
+        ],
+      },
+      riskLevel: "high",
+      requiresApproval: true,
+      requiredDocumentation: documentation,
+      contextPackage: contextPackageForChild("review", baseContext),
+    },
+  ];
+
+  const plan: OrchestrationTaskDecompositionPlan = {
+    planId,
+    summary,
+    parent: {
+      taskId: input.taskId,
+      workspacePath: input.workspacePath,
+      prompt: input.prompt,
+      priority: input.priority,
+      agent: input.agent,
+      contextPackage: input.contextPackage,
+    },
+    children,
+    documentation,
+  };
+  const validation = validateTaskDecompositionPlan(plan, { toolCatalog: options.toolCatalog });
+  if (!validation.valid) {
+    return {
+      ...plan,
+      summary: `${summary} Generated plan has validation errors and must be reviewed before execution.`,
+    };
+  }
+  return plan;
 }
 
 export interface OrchestrationPlanValidationOptions {
@@ -538,4 +740,85 @@ function findChildDependencyCycle(
   }
 
   return undefined;
+}
+
+function normalizeWriteScopePaths(paths: string[] | undefined, workspacePath: string): string[] {
+  const normalized = uniqueValues(paths?.map((path) => path.trim()).filter(Boolean) ?? []);
+  return normalized.length > 0 ? normalized : [workspacePath];
+}
+
+function uniqueValues(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function copyDocumentationRequirements(
+  requirements: OrchestrationDocumentationRequirement[],
+): OrchestrationDocumentationRequirement[] {
+  return requirements.map((requirement) => ({
+    ...requirement,
+    sources: requirement.sources.map((source) => ({ ...source })),
+    gaps: requirement.gaps ? [...requirement.gaps] : undefined,
+  }));
+}
+
+function context7DocumentationRequirement(milestoneId: string | undefined): OrchestrationDocumentationRequirement {
+  return {
+    requirementId: "context7-preflight",
+    label: "Context7 documentation preflight",
+    reason: "Workers must resolve current library and framework documentation before implementation changes.",
+    sources: [],
+    gaps: [
+      `Resolve Context7 docs during preflight for libraries touched by ${milestoneId ?? "this task"}.`,
+    ],
+  };
+}
+
+function contextPackageForChild(role: string, summary: string) {
+  return {
+    summary,
+    sources: [
+      {
+        sourceId: `${role}-task-brief`,
+        kind: "task_brief" as const,
+        label: "Planner-generated worker brief",
+        uri: `plato://orchestration/plans/${role}`,
+        summary: "Deterministic planner context for a read-only decomposition plan.",
+      },
+    ],
+    artifacts: [
+      {
+        artifactId: `${role}-boundaries`,
+        kind: "summary" as const,
+        label: "Worker boundaries and handoff expectations",
+        mimeType: "text/plain",
+        content: summary,
+        summary: "Workspace, write boundary, documentation, verification, and PR expectations.",
+      },
+    ],
+  };
+}
+
+function workerPrompt(input: {
+  title: string;
+  task: string;
+  boundaries: string[];
+  allowedTools: string[];
+  dependencies: string[];
+  context7: OrchestrationDocumentationRequirement[];
+  verificationCommands: string[];
+  acceptanceCriteria: string[];
+  reviewSteps: string[];
+}): string {
+  return [
+    input.title,
+    "",
+    `Task: ${input.task}`,
+    `Dependencies: ${input.dependencies.length > 0 ? input.dependencies.join(", ") : "none"}`,
+    `Write boundaries: ${input.boundaries.join(", ")}`,
+    `Allowed tools: ${input.allowedTools.join(", ")}`,
+    `Context7 requirements: ${input.context7.map((requirement) => requirement.label).join(", ")}`,
+    `Verification commands: ${input.verificationCommands.length > 0 ? input.verificationCommands.join(" && ") : "none"}`,
+    `Acceptance criteria: ${input.acceptanceCriteria.join("; ")}`,
+    `Review and PR steps: ${input.reviewSteps.join("; ")}`,
+  ].join("\n");
 }
