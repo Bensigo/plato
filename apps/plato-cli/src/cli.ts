@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { runPlatoCliWithRuntime, runPlatoMcpWithRuntime } from "./bootstrap.js";
+import { isMainModule } from "./bin.js";
 import { runPlatoSmoke } from "./smoke.js";
 import type {
   RunPlatoCliWithRuntimeOptions,
@@ -211,7 +212,7 @@ function buildCommandHelpText(command: string): string {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   process.exitCode = await runPlato(process.argv.slice(2));
 }
 

@@ -26,6 +26,7 @@ import { DefaultCodexRuntimeManager } from "./runtime/codex-runtime-manager.js";
 import { CodexSdkBackedAgentSessionFactory } from "./session/codex-sdk-backed-agent-session.js";
 import { openCodexRunnerPersistence } from "./store/sqlite-runner-persistence.js";
 import { GitWorktreeManager } from "./worktree/git-worktree-manager.js";
+import { isMainModule } from "./bin.js";
 
 type Writer = {
   write(chunk: string): void;
@@ -957,7 +958,7 @@ function buildHelpText(): string {
   ].join("\n");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const exitCode = await runCodexRunnerCli(process.argv.slice(2));
   process.exitCode = exitCode;
 }
