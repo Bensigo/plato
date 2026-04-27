@@ -1,4 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
 export type ChatGptLoginMode = "browser" | "device_code";
@@ -66,11 +69,13 @@ export class CodexAppServerAuthClient {
   #initialized = false;
 
   constructor(options: CodexAppServerAuthClientOptions = {}) {
+    const command = resolveCodexAppServerCommand(options.codexPath);
     this.#transport =
       options.transport ??
       new JsonlRpcProcessTransport({
-        command: options.codexPath ?? "codex",
-        args: ["app-server", "--listen", "stdio://"],
+        command: command.executable,
+        args: [...command.args, "app-server", "--listen", "stdio://"],
+        displayCommand: command.displayCommand,
       });
     this.#clientInfo = options.clientInfo ?? {
       name: "plato",
@@ -143,6 +148,7 @@ export class CodexAppServerAuthClient {
 
 interface JsonlRpcProcessTransportOptions {
   command: string;
+  displayCommand?: string;
   args: string[];
 }
 
@@ -163,7 +169,7 @@ class JsonlRpcProcessTransport implements CodexAccountRpcTransport {
       this.#stderr += chunk.toString("utf8");
     });
     this.#child.once("error", (error) => {
-      this.#rejectAll(formatCodexProcessError(error, options.command));
+      this.#rejectAll(formatCodexProcessError(error, options.displayCommand ?? options.command));
     });
     this.#child.once("exit", (code, signal) => {
       if (!this.#closed) {
@@ -406,6 +412,49 @@ function formatCodexProcessError(error: Error & NodeJS.ErrnoException, command: 
   }
 
   return error;
+}
+
+function resolveCodexAppServerCommand(codexPath: string | undefined): {
+  executable: string;
+  args: string[];
+  displayCommand: string;
+} {
+  if (codexPath) {
+    return {
+      executable: codexPath,
+      args: [],
+      displayCommand: codexPath,
+    };
+  }
+
+  const bundledCodexPath = resolveBundledCodexCliPath();
+  if (bundledCodexPath) {
+    return {
+      executable: process.execPath,
+      args: [bundledCodexPath],
+      displayCommand: "bundled @openai/codex",
+    };
+  }
+
+  return {
+    executable: "codex",
+    args: [],
+    displayCommand: "codex",
+  };
+}
+
+function resolveBundledCodexCliPath(): string | undefined {
+  try {
+    const require = createRequire(import.meta.url);
+    const packageJsonPath = require.resolve("@openai/codex/package.json");
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+      bin?: string | Record<string, string>;
+    };
+    const binPath = typeof packageJson.bin === "string" ? packageJson.bin : packageJson.bin?.codex;
+    return binPath ? resolve(dirname(packageJsonPath), binPath) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

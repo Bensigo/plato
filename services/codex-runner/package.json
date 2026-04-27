@@ -1,6 +1,6 @@
 {
   "name": "@bensigo/plato-codex-runner",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -38,6 +38,7 @@
     "@bensigo/plato-db": "workspace:*",
     "@bensigo/plato-config": "workspace:*",
     "@bensigo/plato-orchestration": "workspace:*",
+    "@openai/codex": "^0.125.0",
     "@openai/codex-sdk": "^0.123.0"
   }
 }

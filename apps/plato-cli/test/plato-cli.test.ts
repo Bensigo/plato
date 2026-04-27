@@ -10,6 +10,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 import { runPlato } from "../src/cli.js";
 import { runPlatoMcp } from "../src/mcp.js";
+import { buildInstallCheckMessage } from "../src/postinstall.js";
 import { runPlatoSmoke, type PlatoSmokeSummary } from "../src/smoke.js";
 import { createPlatoMcpServer, runPlatoCli, type OrchestrationClient } from "../src/index.js";
 import {
@@ -589,6 +590,35 @@ describe("plato product surface", () => {
     expect(configStdout.text).toContain("Use auth-chatgpt for your Codex/ChatGPT subscription");
     expect(configStdout.text).toContain("plato config set-model <model>");
     expect(configStdout.text).toContain("plato config status");
+  });
+
+  it("prints install-time guidance when Codex CLI is missing", () => {
+    const missingCodexMessage = buildInstallCheckMessage({
+      node: {
+        version: "v22.21.1",
+        supported: true,
+      },
+      codex: {
+        found: false,
+      },
+    });
+
+    expect(missingCodexMessage).toContain("Action needed: Codex CLI was not found on PATH.");
+    expect(missingCodexMessage).toContain("npm install -g @openai/codex");
+    expect(missingCodexMessage).toContain("plato config auth-chatgpt");
+
+    expect(
+      buildInstallCheckMessage({
+        node: {
+          version: "v22.21.1",
+          supported: true,
+        },
+        codex: {
+          found: true,
+          version: "codex 0.125.0",
+        },
+      }),
+    ).toContain("OK Codex CLI detected (codex 0.125.0)");
   });
 
   it("configures the default model through the Plato CLI", async () => {

@@ -12,6 +12,14 @@ After the npm packages are published, install Plato with:
 npm install -g @bensigo/plato-cli
 ```
 
+The global install runs a non-fatal setup check. Plato includes the official
+Codex CLI package for auth and task execution; install Codex globally only if
+you also want the standalone `codex` command:
+
+```sh
+npm install -g @openai/codex
+```
+
 Then log in with Codex/ChatGPT so real tasks use your subscription, and choose
 the default Codex model:
 
