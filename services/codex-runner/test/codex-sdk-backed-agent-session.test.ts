@@ -147,6 +147,71 @@ describe("CodexSdkBackedAgentSession", () => {
     ]);
   });
 
+  it("renders context packages into the Codex prompt", async () => {
+    const logStreamer = new InMemoryLogStreamer();
+    const codex = new FakeCodexClient([
+      {
+        type: "turn.completed",
+        usage: {
+          input_tokens: 10,
+          cached_input_tokens: 0,
+          output_tokens: 12,
+        },
+      },
+    ]);
+    const session = new CodexSdkBackedAgentSession(codex, logStreamer);
+
+    await session.start(
+      {
+        taskId: "task-1",
+        repoPath: "/repo",
+        prompt: "fix it",
+        priority: 0,
+        state: "queued",
+      },
+      {
+        taskId: "task-1",
+        repoPath: "/repo",
+        branchName: "plato/task-task-1",
+        worktreePath: "/repo/.plato/worktrees/task-1",
+      },
+      {
+        contextPackage: {
+          taskId: "task-1",
+          summary: "Use the current route contract.",
+          sources: [
+            {
+              sourceId: "source-1",
+              kind: "repo_file",
+              label: "Route contract",
+              uri: "file:///repo/src/routes.ts",
+              summary: "Defines route inputs.",
+            },
+          ],
+          artifacts: [
+            {
+              artifactId: "artifact-1",
+              kind: "summary",
+              label: "Worker brief",
+              mimeType: "text/markdown",
+              content: "Keep writes inside src/routes.ts.",
+              summary: "Boundary brief.",
+            },
+          ],
+        },
+      },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(codex.threads[0]?.prompts[0]).toContain("fix it");
+    expect(codex.threads[0]?.prompts[0]).toContain("## Plato Context Package");
+    expect(codex.threads[0]?.prompts[0]).toContain("Use the current route contract.");
+    expect(codex.threads[0]?.prompts[0]).toContain("Route contract (repo_file, source-1)");
+    expect(codex.threads[0]?.prompts[0]).toContain("Artifact ID: artifact-1");
+    expect(codex.threads[0]?.prompts[0]).toContain("Keep writes inside src/routes.ts.");
+  });
+
   it("aborts the active turn when interrupted", async () => {
     const logStreamer = new InMemoryLogStreamer();
     const codex = new FakeCodexClient([
