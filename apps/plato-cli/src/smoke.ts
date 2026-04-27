@@ -6,6 +6,9 @@ import type {
   AgentRuntimeSelector,
   CreateOrchestrationGraphInput,
   OrchestrationEvent,
+  OrchestrationGraphReviewSnapshot,
+  OrchestrationPlanValidationResult,
+  OrchestrationTaskDecompositionPlan,
   OrchestrationTaskGraphResultSnapshot,
   OrchestrationTaskGraphSnapshot,
   OrchestrationTaskRecord,
@@ -29,10 +32,14 @@ export interface PlatoSmokeSummary {
     statusReadable: boolean;
     eventsReadable: boolean;
     listed: boolean;
+    delegated: boolean;
+    delegateValidationReadable: boolean;
     graphStarted: boolean;
     graphStatusReadable: boolean;
     graphResultsReadable: boolean;
+    finalOutcomeReadable: boolean;
     graphEventsReadable: boolean;
+    reviewReadable: boolean;
     interrupted: boolean;
     resumed: boolean;
     interruptResumeEventsReadable: boolean;
@@ -46,22 +53,9 @@ export async function runPlatoSmoke(options: RunPlatoSmokeOptions = {}): Promise
   const stderr = options.stderr ?? process.stderr;
   const client = new SmokeOrchestrationClient();
   const taskId = "plato-smoke-task";
-  const graphTaskId = "plato-smoke-graph";
+  const graphTaskId = "plato-smoke-delegate";
   const workspacePath = options.cwd ?? process.env.INIT_CWD ?? process.cwd();
   const prompt = "Run Plato deterministic smoke task";
-  const children = [
-    {
-      taskId: "plato-smoke-graph-child-a",
-      prompt: "Inspect deterministic graph child A",
-      contextPackage: { summary: "smoke child a" },
-    },
-    {
-      taskId: "plato-smoke-graph-child-b",
-      prompt: "Inspect deterministic graph child B",
-      dependencyTaskIds: ["plato-smoke-graph-child-a"],
-      contextPackage: { summary: "smoke child b" },
-    },
-  ];
 
   try {
     const started = await runSmokeCommand([
@@ -77,20 +71,19 @@ export async function runPlatoSmoke(options: RunPlatoSmokeOptions = {}): Promise
     const status = await runSmokeCommand(["task", "status", "--task-id", taskId], client);
     const events = await runSmokeCommand(["task", "events", "--task-id", taskId], client);
     const tasks = await runSmokeCommand(["task", "list"], client);
-    const graphStarted = await runSmokeCommand([
-      "graph",
+    const delegated = await runSmokeCommand([
+      "delegate",
       "start",
       "--task-id",
       graphTaskId,
       "--workspace-path",
       workspacePath,
       "--prompt",
-      "Run Plato deterministic smoke graph",
-      "--children-json",
-      JSON.stringify(children),
+      "Deliver an MVP end-to-end smoke for the Plato CLI and MCP orchestration surfaces.",
     ], client);
     const graphStatus = await runSmokeCommand(["graph", "status", "--task-id", graphTaskId], client);
     const graphResults = await runSmokeCommand(["graph", "results", "--task-id", graphTaskId], client);
+    const graphReview = await runSmokeCommand(["review", "graph", "--task-id", graphTaskId], client);
     const graphEvents = await runSmokeCommand(["task", "events", "--task-id", graphTaskId], client);
     const interrupted = await runSmokeCommand(["task", "interrupt", "--task-id", taskId], client);
     const resumed = await runSmokeCommand(["task", "resume", "--task-id", taskId], client);
@@ -99,7 +92,11 @@ export async function runPlatoSmoke(options: RunPlatoSmokeOptions = {}): Promise
     const eventTypes = eventList(events).map((event) => event.type);
     const graphEventTypes = eventList(graphEvents).map((event) => event.type);
     const controlEventTypes = eventList(controlEvents).map((event) => event.type);
+    const delegateResponse = delegateTaskResponse(delegated);
+    const delegatedGraph = delegateResponse?.graph;
+    const childCount = delegatedGraph?.children.length ?? 0;
     const resultSnapshot = graphResultSnapshot(graphResults);
+    const reviewSnapshot = graphReviewSnapshot(graphReview);
     const summary: PlatoSmokeSummary = {
       taskId,
       graphTaskId,
@@ -109,17 +106,26 @@ export async function runPlatoSmoke(options: RunPlatoSmokeOptions = {}): Promise
         statusReadable: isTask(status) && status.taskId === taskId,
         eventsReadable: eventTypes.includes("task.queued") && eventTypes.includes("task.completed"),
         listed: taskList(tasks).some((task) => task.taskId === taskId),
-        graphStarted: isGraph(graphStarted)
-          && graphStarted.parent.taskId === graphTaskId
-          && graphStarted.children.length === children.length,
+        delegated: delegateResponse !== undefined
+          && delegateResponse.plan.parent.taskId === graphTaskId
+          && delegateResponse.graph !== undefined,
+        delegateValidationReadable: delegateResponse?.validation.valid === true,
+        graphStarted: isGraph(delegatedGraph)
+          && delegatedGraph.parent.taskId === graphTaskId
+          && delegatedGraph.children.length > 0,
         graphStatusReadable: isGraph(graphStatus) && graphStatus.parent.taskId === graphTaskId,
         graphResultsReadable: resultSnapshot !== undefined
-          && resultSnapshot.results.length === children.length
+          && resultSnapshot.results.length === childCount
           && resultSnapshot.synthesis?.classification === "completed",
+        finalOutcomeReadable: childCount > 0
+          && (resultSnapshot?.synthesis?.summary.includes(`${childCount} deterministic smoke results`) ?? false),
         graphEventsReadable: graphEventTypes.includes("task.graph.created")
           && graphEventTypes.includes("task.graph.result.collected")
           && graphEventTypes.includes("task.graph.synthesized")
           && graphEventTypes.includes("task.graph.completed"),
+        reviewReadable: reviewSnapshot?.finalSynthesis.readiness === "ready"
+          && reviewSnapshot.finalSynthesis.missingResultTaskIds.length === 0
+          && reviewSnapshot.workerStatuses.length === childCount,
         interrupted: isInterruptResult(interrupted) && interrupted.taskId === taskId,
         resumed: isTask(resumed) && resumed.taskId === taskId && resumed.state === "running",
         interruptResumeEventsReadable: controlEventTypes.includes("task.interrupted")
@@ -382,6 +388,24 @@ function isGraph(value: unknown): value is OrchestrationTaskGraphSnapshot {
 function graphResultSnapshot(value: unknown): OrchestrationTaskGraphResultSnapshot | undefined {
   return Boolean(value && typeof value === "object" && "results" in value)
     ? value as OrchestrationTaskGraphResultSnapshot
+    : undefined;
+}
+
+interface SmokeDelegateTaskResponse {
+  plan: OrchestrationTaskDecompositionPlan;
+  validation: OrchestrationPlanValidationResult;
+  graph?: OrchestrationTaskGraphSnapshot;
+}
+
+function delegateTaskResponse(value: unknown): SmokeDelegateTaskResponse | undefined {
+  return Boolean(value && typeof value === "object" && "plan" in value && "validation" in value)
+    ? value as SmokeDelegateTaskResponse
+    : undefined;
+}
+
+function graphReviewSnapshot(value: unknown): OrchestrationGraphReviewSnapshot | undefined {
+  return Boolean(value && typeof value === "object" && "finalSynthesis" in value)
+    ? value as OrchestrationGraphReviewSnapshot
     : undefined;
 }
 

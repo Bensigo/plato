@@ -30,9 +30,10 @@ It also exposes a deterministic health check:
 pnpm --filter @plato/cli smoke
 ```
 
-The smoke command exercises task start, status, list, and events through the
-real CLI handlers using an in-memory fake runtime. For the real Codex-backed
-manual smoke path, see [docs/local-task-smoke.md](/Users/macbook/work/plato/docs/local-task-smoke.md).
+The smoke command exercises task lifecycle, delegated decomposition, validation,
+worker graph execution, graph results, graph review, and interrupt/resume
+control flow through the real CLI handlers using an in-memory fake runtime. For
+the real Codex-backed manual smoke path, see [docs/local-task-smoke.md](/Users/macbook/work/plato/docs/local-task-smoke.md).
 
 The read-only worker tool harness catalog is available without opening a runtime:
 

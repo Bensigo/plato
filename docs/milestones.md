@@ -241,6 +241,15 @@ Deliverables:
 - deterministic smoke coverage for the full loop
 - MVP acceptance documentation
 
+Current M34 scope:
+
+- `plato smoke` drives the full deterministic delegate loop through
+  `plato delegate start`, graph result inspection, graph review, and lifecycle
+  events
+- the smoke summary reports decomposition, validation, final synthesis, and
+  review readiness checks as explicit acceptance signals
+- MVP acceptance criteria live in `docs/mvp-acceptance.md`
+
 Shortest MVP route:
 
 1. M31: improve deterministic decomposition policies.
@@ -252,9 +261,11 @@ core path to "Plato works as an orchestration layer."
 
 ## Immediate Next Step
 
-The next implementation milestone is M31: Smarter Decomposition Policies.
+Review and merge M31 through M34 in order:
 
-M29 and M30 established the delegated execution and result-inspection loop. M31
-should improve the deterministic planner without changing the public surface:
-classify task briefs, choose safer default write scopes, select workspace-aware
-verification commands, and preserve approval gates for risky publishing steps.
+1. M31: smarter deterministic decomposition policies.
+2. M32/M33: operator review surfaces and runtime smoke hardening.
+3. M34: MVP end-to-end acceptance smoke.
+
+After those PRs land, the next roadmap step should move from deterministic MVP
+acceptance into a real Codex-backed smoke run against a disposable workspace.
