@@ -1,9 +1,9 @@
 # Plato CLI and MCP Surface
 
-`@plato/cli` owns Plato's caller-facing orchestration surface.
+`@bensigo/plato-cli` owns Plato's caller-facing orchestration surface.
 
-This package speaks `@plato/orchestration` contracts only. Command handlers and
-MCP tool handlers must not import `@plato/codex-runner`; Codex is one runtime
+This package speaks `@bensigo/plato-orchestration` contracts only. Command handlers and
+MCP tool handlers must not import `@bensigo/plato-codex-runner`; Codex is one runtime
 adapter behind the orchestration boundary, not the product API.
 
 ## Install
@@ -11,7 +11,7 @@ adapter behind the orchestration boundary, not the product API.
 Install the CLI from npm:
 
 ```sh
-npm install -g @plato/cli
+npm install -g @bensigo/plato-cli
 ```
 
 Then configure the default model you want Plato to use for real Codex-backed
@@ -55,7 +55,7 @@ The package exposes two thin executables:
 It also exposes a deterministic health check:
 
 ```sh
-pnpm --filter @plato/cli smoke
+pnpm --filter @bensigo/plato-cli smoke
 ```
 
 The smoke command exercises task lifecycle, delegated decomposition, validation,
@@ -78,7 +78,7 @@ plato delegate plan --task-id m28 --workspace-path /repo --prompt "Break this in
 ```
 
 The response shape is `{ "plan": ..., "validation": ... }`, using the
-deterministic planner from `@plato/orchestration`.
+deterministic planner from `@bensigo/plato-orchestration`.
 
 To run the default delegated execution flow in one step, use:
 
@@ -174,5 +174,5 @@ Example local agent configuration:
 
 ## Development Notes
 
-- Run tests with `pnpm --filter @plato/cli test`.
-- Run type-checking with `pnpm --filter @plato/cli typecheck`.
+- Run tests with `pnpm --filter @bensigo/plato-cli test`.
+- Run type-checking with `pnpm --filter @bensigo/plato-cli typecheck`.

@@ -9,7 +9,7 @@ The repo is split into user-facing applications in `apps/` and backend or infras
 After the npm packages are published, install Plato with:
 
 ```sh
-npm install -g @plato/cli
+npm install -g @bensigo/plato-cli
 ```
 
 Then choose the default Codex model for real tasks:

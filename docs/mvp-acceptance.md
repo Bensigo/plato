@@ -8,7 +8,7 @@ orchestration layer.
 Run the deterministic smoke from the repository root:
 
 ```sh
-pnpm --filter @plato/cli smoke
+pnpm --filter @bensigo/plato-cli smoke
 ```
 
 The command passes when the JSON summary reports every check as `true`.

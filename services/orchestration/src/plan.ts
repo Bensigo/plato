@@ -194,10 +194,10 @@ const TASK_DECOMPOSITION_POLICIES: Record<TaskDecompositionPolicyKind, TaskDecom
     label: "CLI/MCP adapter",
     defaultWriteScopePaths: ["apps/plato-cli/src", "apps/plato-cli/test"],
     verificationCommands: [
-      "pnpm --filter @plato/cli test",
-      "pnpm --filter @plato/cli typecheck",
-      "pnpm --filter @plato/orchestration test",
-      "pnpm --filter @plato/orchestration typecheck",
+      "pnpm --filter @bensigo/plato-cli test",
+      "pnpm --filter @bensigo/plato-cli typecheck",
+      "pnpm --filter @bensigo/plato-orchestration test",
+      "pnpm --filter @bensigo/plato-orchestration typecheck",
     ],
     acceptanceCriteria: [
       "CLI and MCP adapter changes preserve neutral plato.* operation contracts.",
@@ -209,8 +209,8 @@ const TASK_DECOMPOSITION_POLICIES: Record<TaskDecompositionPolicyKind, TaskDecom
     label: "Backend service",
     defaultWriteScopePaths: ["services"],
     verificationCommands: [
-      "pnpm --filter @plato/orchestration test",
-      "pnpm --filter @plato/orchestration typecheck",
+      "pnpm --filter @bensigo/plato-orchestration test",
+      "pnpm --filter @bensigo/plato-orchestration typecheck",
     ],
     acceptanceCriteria: [
       "Service behavior is covered by focused tests at the owning service boundary.",
@@ -221,7 +221,7 @@ const TASK_DECOMPOSITION_POLICIES: Record<TaskDecompositionPolicyKind, TaskDecom
     kind: "docs",
     label: "Documentation",
     defaultWriteScopePaths: ["README.md", "docs", "services/orchestration/README.md"],
-    verificationCommands: ["pnpm --filter @plato/orchestration typecheck"],
+    verificationCommands: ["pnpm --filter @bensigo/plato-orchestration typecheck"],
     acceptanceCriteria: [
       "Documentation names the affected user-facing or service contract accurately.",
       "Examples, commands, and workflow steps match the implemented behavior.",

@@ -60,7 +60,7 @@ describe("orchestration review snapshots", () => {
           writeScopePaths: ["services/orchestration/test/orchestration-review.test.ts"],
           exclusiveWriteScope: false,
           allowedToolNames: ["run_tests", "request_review", "git.push", "github.open_pr"],
-          verificationCommands: ["pnpm --filter @plato/orchestration test"],
+          verificationCommands: ["pnpm --filter @bensigo/plato-orchestration test"],
           acceptanceCriteriaCount: 1,
           requiredDocumentationCount: 0,
         },
@@ -187,7 +187,7 @@ function buildReviewPlan(
         writeScope: { paths: ["services/orchestration/src/review.ts"], exclusive: true },
         allowedToolNames: ["search_repo", "read_file", "apply_patch", "run_tests"],
         verification: {
-          commands: ["pnpm --filter @plato/orchestration test"],
+          commands: ["pnpm --filter @bensigo/plato-orchestration test"],
           acceptanceCriteria: ["Review snapshots are pure functions."],
         },
         riskLevel: "medium",
@@ -203,7 +203,7 @@ function buildReviewPlan(
         },
         allowedToolNames: ["run_tests", "request_review", "git.push", "github.open_pr"],
         verification: {
-          commands: ["pnpm --filter @plato/orchestration test"],
+          commands: ["pnpm --filter @bensigo/plato-orchestration test"],
           acceptanceCriteria: ["Milestone branch is ready for review."],
         },
         riskLevel: "high",

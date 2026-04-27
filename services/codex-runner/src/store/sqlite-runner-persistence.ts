@@ -1,4 +1,4 @@
-import { openSqliteDatabase, type SqliteDatabase } from "@plato/db";
+import { openSqliteDatabase, type SqliteDatabase } from "@bensigo/plato-db";
 
 import type { RunnerStore, SessionStore } from "../contracts.js";
 import { bootstrapCodexRunnerSchema } from "./sqlite-schema.js";

@@ -28,7 +28,7 @@ export async function runPlato(argv: string[], options: RunPlatoOptions = {}): P
     return 0;
   }
   if (command === "config") {
-    const { runCodexRunnerCli } = await import("@plato/codex-runner");
+    const { runCodexRunnerCli } = await import("@bensigo/plato-codex-runner");
     return runCodexRunnerCli(["config", ...rest], {
       cwd: process.cwd(),
       stdout: options.stdout,

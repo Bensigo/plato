@@ -84,9 +84,9 @@ Hermes, OpenClaw, or other personal agents can call Plato as a reusable local or
 
 Current M24 scope:
 
-- protocol-neutral `plato.*` operation descriptors over `@plato/orchestration`
+- protocol-neutral `plato.*` operation descriptors over `@bensigo/plato-orchestration`
 - JSON-friendly command response envelopes for tasks, graphs, events, controls, and graph results
-- `@plato/cli` as the first CLI/MCP-facing app package
+- `@bensigo/plato-cli` as the first CLI/MCP-facing app package
 - MCP tool/resource registration for the neutral product surface
 
 Current M26 scope:

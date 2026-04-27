@@ -17,7 +17,7 @@ import type {
   OrchestrationTaskState,
   OrchestrationToolHarnessDescriptor,
   StartOrchestrationTaskInput,
-} from "@plato/orchestration";
+} from "@bensigo/plato-orchestration";
 import {
   DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG,
   ORCHESTRATION_SURFACE_TOOLS,
@@ -26,7 +26,7 @@ import {
   createTaskDecompositionPlan,
   createValidatedGraphInputFromDecompositionPlan,
   validateTaskDecompositionPlan,
-} from "@plato/orchestration";
+} from "@bensigo/plato-orchestration";
 
 export interface OrchestrationClient {
   startTask(input: StartOrchestrationTaskInput): Promise<OrchestrationTaskRecord>;

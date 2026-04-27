@@ -1,5 +1,5 @@
 {
-  "name": "@plato/cli",
+  "name": "@bensigo/plato-cli",
   "version": "0.1.0",
   "type": "module",
   "publishConfig": {
@@ -33,8 +33,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@plato/codex-runner": "workspace:*",
-    "@plato/orchestration": "workspace:*",
+    "@bensigo/plato-codex-runner": "workspace:*",
+    "@bensigo/plato-orchestration": "workspace:*",
     "zod": "^4.3.6"
   },
   "devDependencies": {

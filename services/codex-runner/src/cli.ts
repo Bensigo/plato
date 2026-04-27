@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-import { createFileBackedPlatoConfigService } from "@plato/config";
+import { createFileBackedPlatoConfigService } from "@bensigo/plato-config";
 import type { CodexOptions } from "@openai/codex-sdk";
 import type {
   CreateTaskGraphInput,

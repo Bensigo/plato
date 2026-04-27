@@ -27,7 +27,7 @@ import type {
   OrchestrationTaskGraphSnapshot,
   OrchestrationTaskRecord,
   StartOrchestrationTaskInput,
-} from "@plato/orchestration";
+} from "@bensigo/plato-orchestration";
 import type {
   CreateTaskGraphInput,
   CodexRunnerAgentRuntimeService,
@@ -35,7 +35,7 @@ import type {
   RunnerTaskGraphSnapshot,
   RunnerTaskRecord,
   SessionEvent,
-} from "@plato/codex-runner";
+} from "@bensigo/plato-codex-runner";
 
 describe("plato product surface", () => {
   it("routes CLI task starts through neutral orchestration inputs", async () => {
@@ -467,7 +467,7 @@ describe("plato product surface", () => {
   it("keeps CLI and MCP handlers free of Codex runner imports", async () => {
     const handlerSource = await readFile(resolve(import.meta.dirname, "../src/index.ts"), "utf8");
 
-    expect(handlerSource).not.toContain("@plato/codex-runner");
+    expect(handlerSource).not.toContain("@bensigo/plato-codex-runner");
     expect(handlerSource).not.toContain("@modelcontextprotocol/sdk/server/stdio.js");
   });
 
@@ -1334,7 +1334,7 @@ function buildTaskGraphPlan(): OrchestrationTaskDecompositionPlan {
         writeScope: { paths: ["services/orchestration"] },
         allowedToolNames: ["search_repo", "read_file", "apply_patch", "run_tests"],
         verification: {
-          commands: ["pnpm --filter @plato/orchestration test"],
+          commands: ["pnpm --filter @bensigo/plato-orchestration test"],
           acceptanceCriteria: ["Plan validation is deterministic."],
         },
         riskLevel: "medium",
@@ -1347,7 +1347,7 @@ function buildTaskGraphPlan(): OrchestrationTaskDecompositionPlan {
         writeScope: { paths: ["apps/plato-cli"] },
         allowedToolNames: ["search_repo", "read_file", "apply_patch", "run_tests"],
         verification: {
-          commands: ["pnpm --filter @plato/cli test"],
+          commands: ["pnpm --filter @bensigo/plato-cli test"],
           acceptanceCriteria: ["CLI planning commands do not start execution."],
         },
         riskLevel: "medium",
@@ -1405,7 +1405,7 @@ function buildTaskGraphResults(): OrchestrationTaskGraphResultSnapshot {
         parentTaskId: "parent",
         classification: "partial",
         summary: "Exposed the CLI surface with a follow-up doc note.",
-        metadata: { verification: ["pnpm --filter @plato/cli test"] },
+        metadata: { verification: ["pnpm --filter @bensigo/plato-cli test"] },
       },
     ],
     synthesis: {

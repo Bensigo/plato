@@ -1,5 +1,5 @@
 {
-  "name": "@plato/codex-runner",
+  "name": "@bensigo/plato-codex-runner",
   "version": "0.1.0",
   "type": "module",
   "publishConfig": {
@@ -35,9 +35,9 @@
     "vitest": "^4.1.4"
   },
   "dependencies": {
-    "@plato/db": "workspace:*",
-    "@plato/config": "workspace:*",
-    "@plato/orchestration": "workspace:*",
+    "@bensigo/plato-db": "workspace:*",
+    "@bensigo/plato-config": "workspace:*",
+    "@bensigo/plato-orchestration": "workspace:*",
     "@openai/codex-sdk": "^0.123.0"
   }
 }
