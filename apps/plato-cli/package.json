@@ -1,12 +1,13 @@
 {
   "name": "@bensigo/plato-cli",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "publishConfig": {
     "access": "public"
   },
   "files": [
     "dist/src",
+    "scripts/postinstall.mjs",
     "README.md"
   ],
   "exports": {
@@ -26,7 +27,7 @@
     "build": "tsc --project tsconfig.json",
     "dev": "echo 'plato cli dev not wired yet'",
     "lint": "oxlint .",
-    "postinstall": "node dist/src/postinstall.js",
+    "postinstall": "node scripts/postinstall.mjs",
     "prepack": "npm run build",
     "smoke": "pnpm build && node dist/src/cli.js smoke",
     "test": "vitest run --dir test",
