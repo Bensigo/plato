@@ -561,6 +561,25 @@ describe("plato product surface", () => {
     expect(stderr.text).toBe("usage: plato smoke\n");
   });
 
+  it("prints useful top-level and command help without opening the runtime", async () => {
+    const stdout = new MemoryStream();
+    const runCli = vi.fn(async () => {
+      throw new Error("runtime should not open");
+    });
+
+    await expect(runPlato(["--help"], { runCli, stdout })).resolves.toBe(0);
+
+    expect(runCli).not.toHaveBeenCalled();
+    expect(stdout.text).toContain("Plato CLI");
+    expect(stdout.text).toContain("plato task start --workspace-path");
+    expect(stdout.text).toContain("--model <name>");
+
+    const taskStdout = new MemoryStream();
+    await expect(runPlato(["task", "--help"], { runCli, stdout: taskStdout })).resolves.toBe(0);
+    expect(taskStdout.text).toContain("plato task start --workspace-path <path>");
+    expect(taskStdout.text).toContain("plato task events --task-id <id>");
+  });
+
   it("runs a deterministic local task smoke path through CLI handlers", async () => {
     const stdout = new MemoryStream();
 

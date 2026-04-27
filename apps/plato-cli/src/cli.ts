@@ -18,6 +18,14 @@ export interface RunPlatoOptions {
 
 export async function runPlato(argv: string[], options: RunPlatoOptions = {}): Promise<number> {
   const [command, ...rest] = argv;
+  if (!command || command === "help" || command === "--help" || command === "-h") {
+    (options.stdout ?? process.stdout).write(`${buildPlatoHelpText()}\n`);
+    return 0;
+  }
+  if (rest.includes("--help") || rest.includes("-h")) {
+    (options.stdout ?? process.stdout).write(`${buildCommandHelpText(command)}\n`);
+    return 0;
+  }
   if (command === "mcp") {
     const parsed = parseRuntimeOptions(rest);
     if (parsed.error) {
@@ -51,6 +59,127 @@ export async function runPlato(argv: string[], options: RunPlatoOptions = {}): P
     stdout: options.stdout,
     stderr: options.stderr,
   });
+}
+
+function buildPlatoHelpText(): string {
+  return [
+    "Plato CLI",
+    "",
+    "Usage:",
+    "  plato <command> [options]",
+    "",
+    "Common workflows:",
+    "  plato smoke",
+    "      Run the deterministic MVP smoke without opening Codex.",
+    "",
+    "  plato task start --workspace-path \"$PWD\" --prompt \"Inspect this repo\" --model gpt-5.4",
+    "      Start a real Codex-backed task using your local Codex/ChatGPT subscription.",
+    "",
+    "  plato task status --task-id <id>",
+    "      Inspect the current lifecycle state for a task.",
+    "",
+    "  plato task events --task-id <id>",
+    "      Read captured session output and lifecycle events.",
+    "",
+    "  plato delegate start --task-id <id> --workspace-path \"$PWD\" --prompt \"Ship the feature\"",
+    "      Decompose a top-level task, validate the plan, and start the worker graph.",
+    "",
+    "Commands:",
+    "  task       Start, inspect, interrupt, resume, approve, and reject tasks.",
+    "  delegate   Plan or start validated delegated worker graphs.",
+    "  graph      Validate, start, inspect, and read graph results or synthesis.",
+    "  review     Review plans, graph readiness, worker status, and approvals.",
+    "  tool       List available worker tool harnesses.",
+    "  mcp        Run the Plato MCP server over stdio.",
+    "  smoke      Run the deterministic local MVP smoke.",
+    "",
+    "Runtime options:",
+    "  --model <name>                  Override the Codex model for this run, e.g. gpt-5.4.",
+    "  --db-path <path>                Use an explicit task database path.",
+    "  --log-path <path>               Use an explicit event log path.",
+    "  --config-path <path>            Use an explicit Plato config path.",
+    "  --secrets-path <path>           Use an explicit Plato secrets path.",
+    "  --max-concurrent-tasks <count>  Limit concurrent worker execution.",
+    "",
+    "More help:",
+    "  plato task --help",
+    "  plato delegate --help",
+    "  plato graph --help",
+    "  plato review --help",
+    "  plato mcp --help",
+  ].join("\n");
+}
+
+function buildCommandHelpText(command: string): string {
+  switch (command) {
+    case "task":
+      return [
+        "Usage:",
+        "  plato task start --workspace-path <path> --prompt <text> [--task-id <id>] [--model <name>]",
+        "  plato task status --task-id <id>",
+        "  plato task list [--state queued|running|completed|failed|interrupted|awaiting_approval]",
+        "  plato task events --task-id <id>",
+        "  plato task interrupt --task-id <id>",
+        "  plato task resume --task-id <id>",
+        "",
+        "Examples:",
+        "  plato task start --workspace-path \"$PWD\" --prompt \"Inspect this repo\" --model gpt-5.4",
+        "  plato task events --task-id plato-real-smoke",
+      ].join("\n");
+    case "delegate":
+      return [
+        "Usage:",
+        "  plato delegate plan --task-id <id> --workspace-path <path> --prompt <text>",
+        "  plato delegate start --task-id <id> --workspace-path <path> --prompt <text>",
+        "",
+        "Examples:",
+        "  plato delegate plan --task-id mvp --workspace-path \"$PWD\" --prompt \"Break this into reviewable milestones\"",
+        "  plato delegate start --task-id mvp --workspace-path \"$PWD\" --prompt \"Implement and verify this feature\"",
+      ].join("\n");
+    case "graph":
+      return [
+        "Usage:",
+        "  plato graph plan --plan-json <json>",
+        "  plato graph validate --plan-json <json>",
+        "  plato graph start-plan --plan-json <json>",
+        "  plato graph start --task-id <id> --workspace-path <path> --prompt <text> --children-json <json>",
+        "  plato graph status --task-id <id>",
+        "  plato graph results --task-id <id>",
+        "  plato graph synthesis --task-id <id>",
+      ].join("\n");
+    case "review":
+      return [
+        "Usage:",
+        "  plato review plan --plan-json <json>",
+        "  plato review graph --task-id <id>",
+        "  plato review approvals",
+        "",
+        "Use review commands to inspect validation failures, worker boundaries, approval gates, and final synthesis readiness.",
+      ].join("\n");
+    case "tool":
+      return [
+        "Usage:",
+        "  plato tool catalog",
+        "",
+        "Lists worker tool harnesses, risk levels, approval requirements, and failure modes.",
+      ].join("\n");
+    case "mcp":
+      return [
+        "Usage:",
+        "  plato mcp [--model <name>] [--db-path <path>] [--log-path <path>]",
+        "",
+        "Runs the Plato MCP server over stdio for agent clients.",
+      ].join("\n");
+    case "smoke":
+      return [
+        "Usage:",
+        "  plato smoke",
+        "",
+        "Runs deterministic task, delegate, graph, result, review, interrupt, and resume checks with an in-memory runtime.",
+      ].join("\n");
+    default:
+      return buildPlatoHelpText();
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
