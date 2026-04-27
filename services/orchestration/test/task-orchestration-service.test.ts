@@ -5,6 +5,7 @@ import {
   type AgentRuntime,
   type CreateOrchestrationGraphInput,
   type OrchestrationEvent,
+  type OrchestrationTaskGraphResultSnapshot,
   type OrchestrationTaskGraphSnapshot,
   type OrchestrationTaskRecord,
   type StartOrchestrationTaskInput,
@@ -191,6 +192,43 @@ describe("TaskOrchestrationService", () => {
     expect(codex.createdGraphParentIds).toEqual([]);
   });
 
+  it("prefers runtime graph result reconciliation before returning result snapshots", async () => {
+    const runtime = new FakeAgentRuntime("codex-local", "codex");
+    const orchestration = new TaskOrchestrationService({
+      defaultRuntimeId: runtime.runtimeId,
+      runtimes: [runtime],
+    });
+
+    await orchestration.createTaskGraph({
+      parent: {
+        taskId: "parent",
+        workspacePath: "/repo",
+        prompt: "Parent",
+      },
+      children: [
+        {
+          taskId: "child",
+          prompt: "Child",
+        },
+      ],
+    });
+
+    await expect(orchestration.getTaskGraphResults("child")).resolves.toEqual({
+      parentTaskId: "parent",
+      results: [
+        {
+          resultId: "result-child",
+          taskId: "child",
+          parentTaskId: "parent",
+          classification: "completed",
+          summary: "Reconciled child result.",
+        },
+      ],
+    });
+    expect(runtime.reconciledGraphResultTaskIds).toEqual(["child"]);
+    expect(runtime.graphResultTaskIds).toEqual([]);
+  });
+
   it("fails explicitly when a requested runtime is not registered", async () => {
     const runtime = new FakeAgentRuntime("default-agent", "test-agent");
     const orchestration = new TaskOrchestrationService({
@@ -215,7 +253,11 @@ class FakeAgentRuntime implements AgentRuntime {
   readonly interruptedTaskIds: string[] = [];
   readonly listedEventTaskIds: string[] = [];
   readonly resumedTaskIds: string[] = [];
+  readonly graphResultTaskIds: string[] = [];
+  readonly reconciledGraphResultTaskIds: string[] = [];
   readonly tasks = new Map<string, OrchestrationTaskRecord>();
+  readonly graphResults = new Map<string, OrchestrationTaskGraphResultSnapshot>();
+  readonly graphParentTaskIds = new Map<string, string>();
 
   constructor(
     readonly runtimeId: string,
@@ -243,7 +285,18 @@ class FakeAgentRuntime implements AgentRuntime {
     );
     for (const child of children) {
       this.tasks.set(child.taskId, child);
+      this.graphParentTaskIds.set(child.taskId, parent.taskId);
     }
+    this.graphResults.set(parent.taskId, {
+      parentTaskId: parent.taskId,
+      results: children.map((child) => ({
+        resultId: `result-${child.taskId}`,
+        taskId: child.taskId,
+        parentTaskId: parent.taskId,
+        classification: "completed",
+        summary: `Reconciled ${child.taskId} result.`,
+      })),
+    });
     return {
       parent,
       children,
@@ -257,6 +310,17 @@ class FakeAgentRuntime implements AgentRuntime {
 
   async getTaskGraph(): Promise<OrchestrationTaskGraphSnapshot | undefined> {
     return undefined;
+  }
+
+  async getTaskGraphResults(taskId: string): Promise<OrchestrationTaskGraphResultSnapshot | undefined> {
+    this.graphResultTaskIds.push(taskId);
+    return this.graphResults.get(taskId);
+  }
+
+  async reconcileTaskGraphResults(taskId: string): Promise<OrchestrationTaskGraphResultSnapshot | undefined> {
+    this.reconciledGraphResultTaskIds.push(taskId);
+    const parentTaskId = this.graphParentTaskIds.get(taskId) ?? taskId;
+    return this.graphResults.get(parentTaskId);
   }
 
   async listTasks(): Promise<OrchestrationTaskRecord[]> {

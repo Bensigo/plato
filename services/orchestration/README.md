@@ -78,6 +78,27 @@ Allowed tools must match the declared execution scope. Write tools such as
 tasks, while publishing tools such as `git.push` and `github.open_pr` require
 approval-gated children.
 
+## Result and Synthesis Substrate
+
+The orchestration boundary already has the neutral M30 result shape. Worker
+outputs are represented by `OrchestrationTaskResultRecord`, parent outcomes by
+`OrchestrationSynthesisRecord`, and graph inspection by
+`OrchestrationTaskGraphResultSnapshot`. Classifications are intentionally small
+and product-facing: `completed`, `partial`, `conflicted`, and `failed`.
+
+`plato.get_task_graph_results` exposes those records to CLI/MCP callers without
+requiring knowledge of the backend runtime. When a runtime supports graph result
+reconciliation, neutral result inspection asks it to backfill missing terminal
+child results and syntheses before returning the snapshot. Events can also carry
+result and synthesis identifiers so callers can correlate collection and
+synthesis activity with graph lifecycle events.
+
+The M30 product slice should therefore wire runtime collection, reconciliation,
+and parent synthesis behind these contracts rather than introduce new surface
+area. A reviewable slice should collect one durable result per terminal child
+task, create the parent synthesis only after every child has a result, and keep
+the classification visible through graph result inspection.
+
 ## Development Notes
 
 - Run tests with `pnpm --filter @plato/orchestration test`.

@@ -161,14 +161,33 @@ Deliverables:
 
 ### M30: Worker Result Synthesis
 
-Goal: turn parallel worker output into one coordinated parent result.
+Goal: turn parallel worker output into one coordinated parent result without
+changing the CLI/MCP-facing orchestration contract shape.
 
-Deliverables:
+Already in place:
 
-- structured worker summaries or result artifacts
-- completed, partial, failed, and conflicted result classifications
-- parent synthesis record that references worker results
-- CLI/MCP inspection for per-worker output and final synthesis
+- neutral worker result and parent synthesis records with `completed`,
+  `partial`, `failed`, and `conflicted` classifications
+- graph result snapshots that include per-worker results plus an optional parent
+  synthesis record
+- orchestration events that can reference result and synthesis identifiers
+- `plato.get_task_graph_results`, `plato graph results`, and the
+  `plato graph synthesis` alias for inspecting graph result snapshots
+- Codex runner storage and adapter mapping for worker results and parent
+  syntheses
+
+Next reviewable slice:
+
+- collect one durable worker result per terminal child task through the existing
+  result snapshot contracts
+- synthesize the parent record once all child results are available
+- reconcile already-terminal child tasks before returning graph result
+  inspection snapshots
+- preserve partial, failed, and conflicted classifications in storage, events,
+  and CLI/MCP inspection output
+- add focused coverage around result collection, synthesis readiness, and graph
+  result inspection rather than changing app runtime behavior outside the
+  worker result path
 
 ### M31: Smarter Decomposition Policies
 
@@ -214,18 +233,20 @@ Deliverables:
 
 Shortest MVP route:
 
-1. M29: execute validated delegate plans.
-2. M30: synthesize worker results.
-3. M34: prove the end-to-end smoke.
+1. M30: finish durable worker result collection and parent synthesis.
+2. M34: prove the end-to-end smoke.
 
 M31 through M33 improve quality and reliability, but M29, M30, and M34 are the
 core path to "Plato works as an orchestration layer."
 
 ## Immediate Next Step
 
-The next implementation milestone is M29: Real Delegate Execution.
+The next implementation milestone is M30: Worker Result Synthesis.
 
-M29 should wire the default delegate flow from a top-level task brief to a
-reviewable plan, validation gate, worker graph start, and status inspection
-while preserving the rule that MCP and CLI handlers speak Plato orchestration
-contracts instead of Codex-specific runner internals.
+M29 has established the default delegated execution path from a top-level task
+brief to plan validation, worker graph start, and status inspection. M30 should
+stay reviewable by using the existing result/synthesis substrate instead of
+reshaping the public surface: collect durable child results as workers finish,
+reconcile terminal child results during inspection, create the parent synthesis
+when every child has a result, and prove the classification and inspection
+behavior through focused orchestration and runner coverage.

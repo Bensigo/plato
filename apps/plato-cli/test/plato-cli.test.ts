@@ -381,6 +381,22 @@ describe("plato product surface", () => {
     expect(client.opened).toBe(false);
   });
 
+  it("prints neutral worker results and final synthesis from the CLI", async () => {
+    const client = new FakeOrchestrationClient();
+    client.graphResults.set("parent", buildTaskGraphResults());
+    const stdout = new MemoryStream();
+
+    await expect(
+      runPlatoCli(["graph", "results", "--task-id", "parent", "--runtime-id", "codex-local"], {
+        client,
+        stdout,
+      }),
+    ).resolves.toBe(0);
+
+    expect(client.graphResultLookups).toEqual([{ taskId: "parent", selector: { runtimeId: "codex-local" } }]);
+    expect(JSON.parse(stdout.text)).toEqual(buildTaskGraphResults());
+  });
+
   it("creates an MCP server without depending on Codex runner internals", () => {
     const server = createPlatoMcpServer(new FakeOrchestrationClient());
 
@@ -504,7 +520,9 @@ describe("plato product surface", () => {
 
   it("serves the Plato MCP tool catalog over an MCP transport", async () => {
     const client = new Client({ name: "plato-test", version: "0.1.0" });
-    const server = createPlatoMcpServer(new FakeOrchestrationClient());
+    const orchestration = new FakeOrchestrationClient();
+    orchestration.graphResults.set("parent", buildTaskGraphResults());
+    const server = createPlatoMcpServer(orchestration);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
     try {
@@ -690,6 +708,26 @@ describe("plato product surface", () => {
           }),
         ]),
       );
+
+      const graphResultsResult = await client.callTool({
+        name: "plato.get_task_graph_results",
+        arguments: { taskId: "parent", runtimeId: "codex-local" },
+      });
+      const graphResultsContent = graphResultsResult.content as Array<{ type: string; text?: string }>;
+      expect(JSON.parse(
+        graphResultsContent[0]?.type === "text" ? graphResultsContent[0].text ?? "null" : "null",
+      )).toEqual(buildTaskGraphResults());
+      expect(graphResultsResult.structuredContent).toEqual(buildTaskGraphResults());
+
+      const graphResultsResource = await client.readResource({
+        uri: "plato://graphs/parent/results",
+      });
+      const graphResultsResourceContent = graphResultsResource.contents[0];
+      expect(JSON.parse(
+        graphResultsResourceContent && "text" in graphResultsResourceContent
+          ? graphResultsResourceContent.text
+          : "null",
+      )).toEqual(buildTaskGraphResults());
     } finally {
       await client.close();
       await server.close();
@@ -965,6 +1003,8 @@ class FakeTransport implements Transport {
 class FakeOrchestrationClient implements OrchestrationClient {
   readonly startedTasks: StartOrchestrationTaskInput[] = [];
   readonly createdGraphs: CreateOrchestrationGraphInput[] = [];
+  readonly graphResultLookups: Array<{ taskId: string; selector?: AgentRuntimeSelector }> = [];
+  readonly graphResults = new Map<string, OrchestrationTaskGraphResultSnapshot>();
   tasks: OrchestrationTaskRecord[] = [];
   opened = false;
 
@@ -996,9 +1036,13 @@ class FakeOrchestrationClient implements OrchestrationClient {
     return undefined;
   }
 
-  async getTaskGraphResults(): Promise<OrchestrationTaskGraphResultSnapshot | undefined> {
+  async getTaskGraphResults(
+    taskId: string,
+    selector?: AgentRuntimeSelector,
+  ): Promise<OrchestrationTaskGraphResultSnapshot | undefined> {
     this.opened = true;
-    return undefined;
+    this.graphResultLookups.push({ taskId, selector });
+    return this.graphResults.get(taskId);
   }
 
   async listTasks(): Promise<OrchestrationTaskRecord[]> {
@@ -1120,6 +1164,39 @@ function buildInvalidTaskGraphPlan(): OrchestrationTaskDecompositionPlan {
         verification: { commands: [], acceptanceCriteria: [] },
       },
     ],
+  };
+}
+
+function buildTaskGraphResults(): OrchestrationTaskGraphResultSnapshot {
+  return {
+    parentTaskId: "parent",
+    results: [
+      {
+        resultId: "result-child-a",
+        taskId: "child-a",
+        parentTaskId: "parent",
+        classification: "completed",
+        summary: "Implemented the contract changes.",
+        metadata: { changedPaths: ["services/orchestration/src/index.ts"] },
+      },
+      {
+        resultId: "result-child-b",
+        taskId: "child-b",
+        parentTaskId: "parent",
+        classification: "partial",
+        summary: "Exposed the CLI surface with a follow-up doc note.",
+        metadata: { verification: ["pnpm --filter @plato/cli test"] },
+      },
+    ],
+    synthesis: {
+      synthesisId: "synthesis-parent",
+      parentTaskId: "parent",
+      classification: "partial",
+      summary: "Synthesized two worker results for reviewer inspection.",
+      childTaskCount: 2,
+      resultIds: ["result-child-a", "result-child-b"],
+      metadata: { reviewerFocus: ["partial child result"] },
+    },
   };
 }
 

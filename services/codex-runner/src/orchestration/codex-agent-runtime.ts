@@ -33,6 +33,7 @@ export interface CodexRunnerAgentRuntimeService {
   getTask(taskId: string): Promise<RunnerTaskRecord | undefined>;
   getTaskGraph(taskId: string): Promise<RunnerTaskGraphSnapshot | undefined>;
   getTaskGraphResults(taskId: string): Promise<RunnerTaskGraphResultSnapshot | undefined>;
+  reconcileTaskGraphResults?(taskId: string): Promise<RunnerTaskGraphResultSnapshot | undefined>;
   listTasks(): Promise<RunnerTaskRecord[]>;
   listEvents(taskId: string): Promise<SessionEvent[]>;
   interruptTask(taskId: string): Promise<void>;
@@ -100,6 +101,13 @@ export class CodexRunnerAgentRuntime implements AgentRuntime {
 
   async getTaskGraphResults(taskId: string): Promise<OrchestrationTaskGraphResultSnapshot | undefined> {
     const results = await this.#service.getTaskGraphResults(taskId);
+    return results ? this.#mapGraphResults(results) : undefined;
+  }
+
+  async reconcileTaskGraphResults(taskId: string): Promise<OrchestrationTaskGraphResultSnapshot | undefined> {
+    const results = this.#service.reconcileTaskGraphResults
+      ? await this.#service.reconcileTaskGraphResults(taskId)
+      : await this.#service.getTaskGraphResults(taskId);
     return results ? this.#mapGraphResults(results) : undefined;
   }
 
