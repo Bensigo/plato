@@ -22,7 +22,7 @@ import {
   DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG,
   ORCHESTRATION_SURFACE_TOOLS,
   createTaskDecompositionPlan,
-  createGraphInputFromDecompositionPlan,
+  createValidatedGraphInputFromDecompositionPlan,
   validateTaskDecompositionPlan,
 } from "@plato/orchestration";
 
@@ -226,10 +226,17 @@ export function createPlatoMcpServer(client: OrchestrationClient): McpServer {
   });
   registerTool(server, "plato.validate_task_graph_plan", validateTaskGraphPlanSchema, (input) => {
     const plan = taskGraphPlanFromSurfaceInput(input.plan);
-    const validation = validateTaskDecompositionPlan(plan);
+    return createValidatedGraphInputFromDecompositionPlan(plan);
+  });
+  registerTool(server, "plato.create_task_graph_from_plan", validateTaskGraphPlanSchema, async (input) => {
+    const plan = taskGraphPlanFromSurfaceInput(input.plan);
+    const { validation, graphInput } = createValidatedGraphInputFromDecompositionPlan(plan);
+    if (!graphInput) {
+      return { validation };
+    }
     return {
       validation,
-      graphInput: validation.valid ? createGraphInputFromDecompositionPlan(plan) : undefined,
+      graph: await client.createTaskGraph(graphInput),
     };
   });
   registerTool(server, "plato.create_task_graph", createGraphSchema, (input) =>
@@ -427,10 +434,17 @@ async function runGraphCommand(
     }
     case "validate": {
       const plan = parseTaskGraphPlan(requireFlag(flags, "plan-json"), selector);
-      const validation = validateTaskDecompositionPlan(plan);
+      return createValidatedGraphInputFromDecompositionPlan(plan);
+    }
+    case "start-plan": {
+      const plan = parseTaskGraphPlan(requireFlag(flags, "plan-json"), selector);
+      const { validation, graphInput } = createValidatedGraphInputFromDecompositionPlan(plan);
+      if (!graphInput) {
+        return { validation };
+      }
       return {
         validation,
-        graphInput: validation.valid ? createGraphInputFromDecompositionPlan(plan) : undefined,
+        graph: await client.createTaskGraph(graphInput),
       };
     }
     case "start":
@@ -444,7 +458,7 @@ async function runGraphCommand(
         flags["task-id"],
       );
     default:
-      throw new Error("usage: plato graph plan|validate|start|status|results|synthesis");
+      throw new Error("usage: plato graph plan|validate|start-plan|start|status|results|synthesis");
   }
 }
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   OrchestrationProductSurface,
   TaskOrchestrationService,
+  createValidatedGraphInputFromDecompositionPlan,
   validateTaskDecompositionPlan,
   type AgentRuntime,
   type CreateOrchestrationGraphInput,
@@ -359,6 +360,65 @@ describe("OrchestrationProductSurface", () => {
     expect(runtime.createdGraphParentIds).toEqual([]);
   });
 
+  it("does not convert invalid decomposition plans into executable graph input", async () => {
+    const runtime = new SurfaceFakeRuntime("default-agent", "test-agent");
+    const surface = new OrchestrationProductSurface(
+      new TaskOrchestrationService({
+        defaultRuntimeId: runtime.runtimeId,
+        runtimes: [runtime],
+      }),
+    );
+    const plan = buildPlan({
+      children: [
+        {
+          ...buildPlan().children[0]!,
+          allowedToolNames: [],
+          verification: { commands: [], acceptanceCriteria: [] },
+        },
+      ],
+    });
+
+    expect(createValidatedGraphInputFromDecompositionPlan(plan)).toMatchObject({
+      validation: {
+        valid: false,
+        issues: expect.arrayContaining([
+          expect.objectContaining({ code: "ALLOWED_TOOLS_REQUIRED", taskId: "child-a" }),
+          expect.objectContaining({ code: "VERIFICATION_REQUIRED", taskId: "child-a" }),
+        ]),
+      },
+      graphInput: undefined,
+    });
+    await expect(surface.validateTaskGraphPlan({ plan })).resolves.toMatchObject({
+      validation: { valid: false },
+      graphInput: undefined,
+    });
+    await expect(surface.createTaskGraphFromPlan({ plan })).resolves.toMatchObject({
+      validation: { valid: false },
+    });
+    expect(runtime.startedTaskIds).toEqual([]);
+    expect(runtime.createdGraphParentIds).toEqual([]);
+  });
+
+  it("starts execution from a valid decomposition plan through the validated plan gate", async () => {
+    const runtime = new SurfaceFakeRuntime("default-agent", "test-agent");
+    const surface = new OrchestrationProductSurface(
+      new TaskOrchestrationService({
+        defaultRuntimeId: runtime.runtimeId,
+        runtimes: [runtime],
+      }),
+    );
+    const plan = buildPlan();
+
+    await expect(surface.createTaskGraphFromPlan({ plan })).resolves.toMatchObject({
+      validation: { valid: true, issues: [] },
+      graph: {
+        parent: { taskId: "parent" },
+        children: [{ taskId: "child-a" }, { taskId: "child-b" }],
+      },
+    });
+    expect(runtime.createdGraphParentIds).toEqual(["parent"]);
+  });
+
   it("plans a validated read-only decomposition from a top-level task brief", async () => {
     const runtime = new SurfaceFakeRuntime("default-agent", "test-agent");
     const surface = new OrchestrationProductSurface(
@@ -652,6 +712,133 @@ describe("OrchestrationProductSurface", () => {
     });
   });
 
+  it("requires Context7 evidence or an explicit Context7 gap for documentation requirements", () => {
+    const plan = buildPlan({
+      children: [
+        {
+          ...buildPlan().children[0],
+          requiredDocumentation: [
+            {
+              requirementId: "docs-1",
+              label: "Framework docs",
+              reason: "Confirm current framework behavior.",
+              sources: [
+                {
+                  sourceId: "framework-url",
+                  kind: "url",
+                  label: "Framework docs",
+                  uri: "https://example.com/docs",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(validateTaskDecompositionPlan(plan)).toMatchObject({
+      valid: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "CONTEXT7_EVIDENCE_REQUIRED",
+          taskId: "child-a",
+        }),
+      ]),
+    });
+    expect(validateTaskDecompositionPlan({
+      ...plan,
+      children: [
+        {
+          ...plan.children[0]!,
+          requiredDocumentation: [
+            {
+              requirementId: "docs-2",
+              label: "Context7 docs",
+              reason: "Confirm current framework behavior.",
+              sources: [
+                {
+                  sourceId: "context7-docs",
+                  kind: "context7",
+                  label: "Context7 docs",
+                  uri: "context7://framework",
+                  summary: "Context7 documentation confirms the framework behavior.",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })).toMatchObject({
+      valid: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "CONTEXT7_SOURCE_FRESHNESS_REQUIRED",
+          taskId: "child-a",
+        }),
+        expect.objectContaining({
+          code: "CONTEXT7_EVIDENCE_REQUIRED",
+          taskId: "child-a",
+        }),
+      ]),
+    });
+    expect(validateTaskDecompositionPlan({
+      ...plan,
+      children: [
+        {
+          ...plan.children[0]!,
+          requiredDocumentation: [
+            {
+              ...plan.children[0]!.requiredDocumentation![0]!,
+              sources: [],
+              gaps: ["Context7 unavailable for this internal API; use repo contracts instead."],
+            },
+          ],
+        },
+      ],
+    })).toMatchObject({
+      valid: true,
+      issues: [],
+    });
+  });
+
+  it("rejects low-risk writer tasks and publishing tools without approval", () => {
+    const plan = buildPlan({
+      children: [
+        {
+          ...buildPlan().children[0],
+          writeScope: { paths: [] },
+          allowedToolNames: ["apply_patch", "github.open_pr"],
+          riskLevel: "low",
+        },
+      ],
+    });
+
+    expect(validateTaskDecompositionPlan(plan)).toMatchObject({
+      valid: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "WRITE_SCOPE_REQUIRED",
+          taskId: "child-a",
+        }),
+        expect.objectContaining({
+          code: "WRITE_TOOL_SCOPE_REQUIRED",
+          taskId: "child-a",
+          toolName: "apply_patch",
+        }),
+        expect.objectContaining({
+          code: "WRITE_TOOL_RISK_TOO_LOW",
+          taskId: "child-a",
+          toolName: "apply_patch",
+        }),
+        expect.objectContaining({
+          code: "PUBLISHING_TOOL_APPROVAL_REQUIRED",
+          taskId: "child-a",
+          toolName: "github.open_pr",
+        }),
+      ]),
+    });
+  });
+
   it("rejects blank nested boundary, verification, and documentation evidence fields", () => {
     const plan = buildPlan({
       children: [
@@ -692,6 +879,8 @@ describe("OrchestrationProductSurface", () => {
         expect.objectContaining({ code: "DOCUMENTATION_SOURCE_ID_REQUIRED", taskId: "child-a" }),
         expect.objectContaining({ code: "DOCUMENTATION_SOURCE_LABEL_REQUIRED", taskId: "child-a" }),
         expect.objectContaining({ code: "DOCUMENTATION_SOURCE_URI_REQUIRED", taskId: "child-a" }),
+        expect.objectContaining({ code: "CONTEXT7_SOURCE_SUMMARY_REQUIRED", taskId: "child-a" }),
+        expect.objectContaining({ code: "CONTEXT7_SOURCE_FRESHNESS_REQUIRED", taskId: "child-a" }),
       ]),
     });
   });
@@ -731,6 +920,7 @@ function buildPlan(
                 kind: "context7",
                 label: "Context7 docs",
                 uri: "context7://docs",
+                checkedAt: "2026-04-27",
                 summary: "Context7 provides current library documentation.",
               },
             ],

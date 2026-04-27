@@ -54,8 +54,24 @@ contains three deterministic children:
   because it may use external publishing tools.
 
 The product surface immediately validates generated plans with
-`validateTaskDecompositionPlan`, so callers can inspect validation issues before
-calling `create_task_graph`.
+`validateTaskDecompositionPlan`. Use
+`createValidatedGraphInputFromDecompositionPlan` or
+`plato.validate_task_graph_plan` to convert a reviewed decomposition plan into
+executable graph input; invalid plans return validation issues and no graph
+input. `plato.create_task_graph` remains the lower-level execution operation for
+already-prepared graph inputs.
+
+Plan validation also checks that documentation requirements carry usable
+Context7 evidence. A requirement must include a Context7 source with a summary
+and version or `checkedAt` freshness marker, or an explicit Context7 gap that
+explains why the lookup could not be completed. The deterministic planner uses
+an explicit preflight gap so generated plans stay valid before a worker has
+performed live documentation lookup.
+
+Allowed tools must match the declared execution scope. Write tools such as
+`apply_patch` require writable paths and cannot be placed on low-risk read-only
+tasks, while publishing tools such as `git.push` and `github.open_pr` require
+approval-gated children.
 
 ## Development Notes
 

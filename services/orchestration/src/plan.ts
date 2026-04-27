@@ -132,6 +132,7 @@ export const DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG = [
     description: "Open a milestone pull request for review.",
     mode: "external",
     riskLevel: "medium",
+    requiresApproval: true,
     failureModes: ["pr_create_failed", "remote_unavailable"],
   },
 ] as const satisfies OrchestrationToolHarnessCatalog;
@@ -149,6 +150,22 @@ export function createGraphInputFromDecompositionPlan(
       dependencyTaskIds: child.dependencyTaskIds,
       contextPackage: child.contextPackage,
     })),
+  };
+}
+
+export interface ValidatedGraphInputFromDecompositionPlanResult {
+  validation: OrchestrationPlanValidationResult;
+  graphInput?: CreateOrchestrationGraphInput;
+}
+
+export function createValidatedGraphInputFromDecompositionPlan(
+  plan: OrchestrationTaskDecompositionPlan,
+  options: OrchestrationPlanValidationOptions = {},
+): ValidatedGraphInputFromDecompositionPlanResult {
+  const validation = validateTaskDecompositionPlan(plan, options);
+  return {
+    validation,
+    graphInput: validation.valid ? createGraphInputFromDecompositionPlan(plan) : undefined,
   };
 }
 
@@ -504,11 +521,38 @@ function validatePlannedChild(
         toolName,
       });
     }
+    if (isPublishingTool(toolName) && !child.requiresApproval) {
+      issues.push({
+        severity: "error",
+        code: "PUBLISHING_TOOL_APPROVAL_REQUIRED",
+        message: `Child task ${child.taskId} allows publishing tool ${toolName} without approval`,
+        taskId: child.taskId,
+        toolName,
+      });
+    }
     if (tool.documentationRequired && (child.requiredDocumentation?.length ?? 0) === 0) {
       issues.push({
         severity: "error",
         code: "TOOL_DOCUMENTATION_REQUIRED",
         message: `Child task ${child.taskId} allows documentation-sensitive tool ${toolName} without required documentation`,
+        taskId: child.taskId,
+        toolName,
+      });
+    }
+    if (tool.mode === "write" && child.writeScope.paths.length === 0) {
+      issues.push({
+        severity: "error",
+        code: "WRITE_TOOL_SCOPE_REQUIRED",
+        message: `Child task ${child.taskId} allows write tool ${toolName} without a writable path`,
+        taskId: child.taskId,
+        toolName,
+      });
+    }
+    if (tool.mode === "write" && child.riskLevel === "low") {
+      issues.push({
+        severity: "error",
+        code: "WRITE_TOOL_RISK_TOO_LOW",
+        message: `Child task ${child.taskId} is low risk but allows write tool ${toolName}`,
         taskId: child.taskId,
         toolName,
       });
@@ -633,6 +677,24 @@ function validateDocumentationRequirement(
     });
   }
 
+  const hasUsefulContext7Source = requirement.sources.some(
+    (source) =>
+      source.kind === "context7" &&
+      Boolean(source.summary?.trim()) &&
+      Boolean(source.version?.trim() || source.checkedAt?.trim()),
+  );
+  const hasContext7Gap = (requirement.gaps ?? []).some(
+    (gap) => gap.trim().length > 0 && /context7/i.test(gap),
+  );
+  if (!hasUsefulContext7Source && !hasContext7Gap) {
+    issues.push({
+      severity: "error",
+      code: "CONTEXT7_EVIDENCE_REQUIRED",
+      message: `Documentation requirement ${requirement.requirementId} must include useful Context7 evidence or an explicit Context7 gap`,
+      taskId,
+    });
+  }
+
   for (const source of requirement.sources) {
     pushIfBlank(
       issues,
@@ -655,6 +717,33 @@ function validateDocumentationRequirement(
       "Documentation source uri is required",
       taskId,
     );
+    if (source.kind === "context7") {
+      pushIfBlank(
+        issues,
+        source.summary,
+        "CONTEXT7_SOURCE_SUMMARY_REQUIRED",
+        "Context7 documentation source summary is required",
+        taskId,
+      );
+      if (!source.version?.trim() && !source.checkedAt?.trim()) {
+        issues.push({
+          severity: "error",
+          code: "CONTEXT7_SOURCE_FRESHNESS_REQUIRED",
+          message: `Context7 documentation source ${source.sourceId} requires version or checkedAt evidence`,
+          taskId,
+        });
+      }
+    }
+  }
+  for (const gap of requirement.gaps ?? []) {
+    if (!gap.trim()) {
+      issues.push({
+        severity: "error",
+        code: "DOCUMENTATION_GAP_REQUIRED",
+        message: `Documentation requirement ${requirement.requirementId} contains a blank gap`,
+        taskId,
+      });
+    }
   }
 }
 
@@ -695,6 +784,10 @@ function riskRank(riskLevel: "low" | "medium" | "high"): number {
     case "high":
       return 3;
   }
+}
+
+function isPublishingTool(toolName: string): boolean {
+  return toolName === "git.push" || toolName === "github.open_pr";
 }
 
 function findChildDependencyCycle(
@@ -768,7 +861,7 @@ function context7DocumentationRequirement(milestoneId: string | undefined): Orch
     reason: "Workers must resolve current library and framework documentation before implementation changes.",
     sources: [],
     gaps: [
-      `Resolve Context7 docs during preflight for libraries touched by ${milestoneId ?? "this task"}.`,
+      `Context7 evidence gap: Resolve Context7 docs during preflight for libraries touched by ${milestoneId ?? "this task"}.`,
     ],
   };
 }

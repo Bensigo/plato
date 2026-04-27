@@ -151,6 +151,70 @@ describe("plato product surface", () => {
     });
   });
 
+  it("surfaces invalid plan validation without creating executable graph input", async () => {
+    const client = new FakeOrchestrationClient();
+    const stdout = new MemoryStream();
+
+    await expect(
+      runPlatoCli(["graph", "validate", "--plan-json", JSON.stringify(buildInvalidTaskGraphPlan())], {
+        client,
+        stdout,
+      }),
+    ).resolves.toBe(0);
+
+    expect(client.createdGraphs).toEqual([]);
+    expect(JSON.parse(stdout.text)).toMatchObject({
+      validation: {
+        valid: false,
+        issues: expect.arrayContaining([
+          expect.objectContaining({ code: "ALLOWED_TOOLS_REQUIRED", taskId: "child-a" }),
+          expect.objectContaining({ code: "VERIFICATION_REQUIRED", taskId: "child-a" }),
+        ]),
+      },
+    });
+    expect(JSON.parse(stdout.text)).not.toHaveProperty("graphInput");
+  });
+
+  it("starts graph execution from a valid decomposition plan through the validation gate", async () => {
+    const client = new FakeOrchestrationClient();
+    const stdout = new MemoryStream();
+
+    await expect(
+      runPlatoCli(["graph", "start-plan", "--plan-json", JSON.stringify(buildTaskGraphPlan())], {
+        client,
+        stdout,
+      }),
+    ).resolves.toBe(0);
+
+    expect(client.createdGraphs).toHaveLength(1);
+    expect(client.createdGraphs[0]).toMatchObject({
+      parent: { taskId: "parent" },
+      children: [{ taskId: "child-a" }, { taskId: "child-b" }],
+    });
+    expect(JSON.parse(stdout.text)).toMatchObject({
+      validation: { valid: true, issues: [] },
+      graph: { parent: { taskId: "parent" } },
+    });
+  });
+
+  it("does not start graph execution from an invalid decomposition plan", async () => {
+    const client = new FakeOrchestrationClient();
+    const stdout = new MemoryStream();
+
+    await expect(
+      runPlatoCli(["graph", "start-plan", "--plan-json", JSON.stringify(buildInvalidTaskGraphPlan())], {
+        client,
+        stdout,
+      }),
+    ).resolves.toBe(0);
+
+    expect(client.createdGraphs).toEqual([]);
+    expect(JSON.parse(stdout.text)).toMatchObject({
+      validation: { valid: false },
+    });
+    expect(JSON.parse(stdout.text)).not.toHaveProperty("graph");
+  });
+
   it("creates a delegate task plan from the CLI without opening orchestration execution", async () => {
     const client = new FakeOrchestrationClient();
     const stdout = new MemoryStream();
@@ -400,6 +464,7 @@ describe("plato product surface", () => {
       expect(tools.tools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining([
           "plato.delegate_task_plan",
+          "plato.create_task_graph_from_plan",
           "plato.list_tools",
           "plato.list_tasks",
           "plato.list_orchestration_tools",
@@ -493,6 +558,38 @@ describe("plato product surface", () => {
         validation: { valid: true, issues: [] },
         graphInput: { parent: { taskId: "parent" } },
       });
+
+      const invalidValidationResult = await client.callTool({
+        name: "plato.validate_task_graph_plan",
+        arguments: { plan: buildInvalidTaskGraphPlan() as unknown as Record<string, unknown> },
+      });
+      const invalidValidationContent = invalidValidationResult.content as Array<{ type: string; text?: string }>;
+      const invalidValidation = JSON.parse(
+        invalidValidationContent[0]?.type === "text" ? invalidValidationContent[0].text ?? "null" : "null",
+      ) as Record<string, unknown>;
+      expect(invalidValidation).toMatchObject({
+        validation: {
+          valid: false,
+          issues: expect.arrayContaining([
+            expect.objectContaining({ code: "ALLOWED_TOOLS_REQUIRED", taskId: "child-a" }),
+            expect.objectContaining({ code: "VERIFICATION_REQUIRED", taskId: "child-a" }),
+          ]),
+        },
+      });
+      expect(invalidValidation).not.toHaveProperty("graphInput");
+
+      const invalidStartResult = await client.callTool({
+        name: "plato.create_task_graph_from_plan",
+        arguments: { plan: buildInvalidTaskGraphPlan() as unknown as Record<string, unknown> },
+      });
+      const invalidStartContent = invalidStartResult.content as Array<{ type: string; text?: string }>;
+      const invalidStart = JSON.parse(
+        invalidStartContent[0]?.type === "text" ? invalidStartContent[0].text ?? "null" : "null",
+      ) as Record<string, unknown>;
+      expect(invalidStart).toMatchObject({
+        validation: { valid: false },
+      });
+      expect(invalidStart).not.toHaveProperty("graph");
 
       const catalogResult = await client.callTool({
         name: "plato.list_orchestration_tools",
@@ -893,6 +990,8 @@ function buildTaskGraphPlan(): OrchestrationTaskDecompositionPlan {
             kind: "context7",
             label: "Context7 docs",
             uri: "context7://docs",
+            checkedAt: "2026-04-27",
+            summary: "Context7 provides current library documentation.",
           },
         ],
       },
@@ -922,6 +1021,20 @@ function buildTaskGraphPlan(): OrchestrationTaskDecompositionPlan {
           acceptanceCriteria: ["CLI planning commands do not start execution."],
         },
         riskLevel: "medium",
+      },
+    ],
+  };
+}
+
+function buildInvalidTaskGraphPlan(): OrchestrationTaskDecompositionPlan {
+  const plan = buildTaskGraphPlan();
+  return {
+    ...plan,
+    children: [
+      {
+        ...plan.children[0]!,
+        allowedToolNames: [],
+        verification: { commands: [], acceptanceCriteria: [] },
       },
     ],
   };
