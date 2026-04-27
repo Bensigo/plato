@@ -200,6 +200,16 @@ Deliverables:
 - safer default write scopes
 - approval rules based on risk and tool use
 
+Current M31 scope:
+
+- deterministic task-class policy templates for CLI/MCP, backend service, docs,
+  frontend, and infrastructure briefs
+- safer default write scopes, including narrower service defaults when the brief
+  names a known service
+- policy-specific verification commands and acceptance criteria while preserving
+  caller-provided overrides
+- approval-gated publishing handoff preserved for generated review workers
+
 ### M32: Operator Review UX
 
 Goal: make the review loop usable by humans and calling agents.
@@ -233,20 +243,18 @@ Deliverables:
 
 Shortest MVP route:
 
-1. M30: finish durable worker result collection and parent synthesis.
-2. M34: prove the end-to-end smoke.
+1. M31: improve deterministic decomposition policies.
+2. M32/M33: make review and hardening output usable enough for MVP smoke.
+3. M34: prove the end-to-end smoke.
 
 M31 through M33 improve quality and reliability, but M29, M30, and M34 are the
 core path to "Plato works as an orchestration layer."
 
 ## Immediate Next Step
 
-The next implementation milestone is M30: Worker Result Synthesis.
+The next implementation milestone is M31: Smarter Decomposition Policies.
 
-M29 has established the default delegated execution path from a top-level task
-brief to plan validation, worker graph start, and status inspection. M30 should
-stay reviewable by using the existing result/synthesis substrate instead of
-reshaping the public surface: collect durable child results as workers finish,
-reconcile terminal child results during inspection, create the parent synthesis
-when every child has a result, and prove the classification and inspection
-behavior through focused orchestration and runner coverage.
+M29 and M30 established the delegated execution and result-inspection loop. M31
+should improve the deterministic planner without changing the public surface:
+classify task briefs, choose safer default write scopes, select workspace-aware
+verification commands, and preserve approval gates for risky publishing steps.

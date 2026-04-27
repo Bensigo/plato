@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   OrchestrationProductSurface,
   TaskOrchestrationService,
+  createTaskDecompositionPlan,
   createValidatedGraphInputFromDecompositionPlan,
   validateTaskDecompositionPlan,
   type AgentRuntime,
@@ -588,6 +589,117 @@ describe("OrchestrationProductSurface", () => {
     );
     expect(runtime.startedTaskIds).toEqual([]);
     expect(runtime.createdGraphParentIds).toEqual([]);
+  });
+
+  it("classifies top-level task briefs into safer decomposition policy templates", () => {
+    const cases = [
+      {
+        prompt: "Add MCP and CLI flags for validated task graph planning.",
+        expectedPolicy: "CLI/MCP adapter",
+        expectedScope: ["apps/plato-cli/src", "apps/plato-cli/test"],
+        expectedCommands: ["pnpm --filter @plato/cli test", "pnpm --filter @plato/cli typecheck"],
+        expectedCriteria: ["CLI and MCP adapter changes preserve neutral plato.* operation contracts."],
+      },
+      {
+        prompt: "Implement backend service contract validation for orchestration workers.",
+        expectedPolicy: "Backend service",
+        expectedScope: ["services/orchestration/src", "services/orchestration/test"],
+        expectedCommands: [
+          "pnpm --filter @plato/orchestration test",
+          "pnpm --filter @plato/orchestration typecheck",
+        ],
+        expectedCriteria: ["Service behavior is covered by focused tests at the owning service boundary."],
+      },
+      {
+        prompt: "Update README documentation for orchestration planning.",
+        expectedPolicy: "Documentation",
+        expectedScope: ["README.md", "docs", "services/orchestration/README.md"],
+        expectedCommands: ["pnpm --filter @plato/orchestration typecheck"],
+        expectedCriteria: ["Documentation names the affected user-facing or service contract accurately."],
+      },
+      {
+        prompt: "Build a frontend screen for reviewing task graph results.",
+        expectedPolicy: "Frontend application",
+        expectedScope: ["apps/desktop/src", "apps/desktop/test"],
+        expectedCommands: ["pnpm --filter @plato/desktop test", "pnpm --filter @plato/desktop typecheck"],
+        expectedCriteria: ["User-facing flows expose clear loading, empty, error, and success states."],
+      },
+      {
+        prompt: "Adjust CI infrastructure workflow and turbo configuration.",
+        expectedPolicy: "Infrastructure",
+        expectedScope: [".github", "turbo.json", "pnpm-workspace.yaml", "package.json"],
+        expectedCommands: ["pnpm typecheck", "pnpm test"],
+        expectedCriteria: [
+          "Infrastructure changes are scoped to repository configuration or deployment boundaries.",
+        ],
+      },
+    ];
+
+    for (const taskCase of cases) {
+      const plan = createTaskDecompositionPlan({
+        taskId: taskCase.expectedPolicy.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+        workspacePath: "/repo",
+        prompt: taskCase.prompt,
+      });
+      const implementation = plan.children.find((child) => child.taskId.endsWith("-implementation"));
+
+      expect(validateTaskDecompositionPlan(plan)).toEqual({ valid: true, issues: [] });
+      expect(implementation).toMatchObject({
+        writeScope: {
+          exclusive: true,
+          paths: taskCase.expectedScope,
+        },
+        verification: {
+          commands: expect.arrayContaining(taskCase.expectedCommands),
+          acceptanceCriteria: expect.arrayContaining(taskCase.expectedCriteria),
+        },
+        contextPackage: expect.objectContaining({
+          summary: expect.stringContaining(`Task class policy: ${taskCase.expectedPolicy}`),
+        }),
+      });
+      expect(implementation?.prompt).toContain(`Task class policy: ${taskCase.expectedPolicy}`);
+    }
+  });
+
+  it("keeps caller-provided scopes while applying the matching policy verification template", () => {
+    const plan = createTaskDecompositionPlan({
+      taskId: "custom-cli",
+      workspacePath: "/repo",
+      prompt: "Add CLI output for plan validation.",
+      writeScopePaths: ["apps/plato-cli/src/index.ts", "apps/plato-cli/test/plato-cli.test.ts"],
+      verificationCommands: ["pnpm --filter @plato/cli lint"],
+    });
+    const implementation = plan.children.find((child) => child.taskId === "custom-cli-implementation");
+
+    expect(implementation).toMatchObject({
+      writeScope: {
+        exclusive: true,
+        paths: ["apps/plato-cli/src/index.ts", "apps/plato-cli/test/plato-cli.test.ts"],
+      },
+      verification: {
+        commands: expect.arrayContaining([
+          "pnpm --filter @plato/cli lint",
+          "pnpm --filter @plato/cli test",
+          "pnpm --filter @plato/cli typecheck",
+        ]),
+      },
+    });
+  });
+
+  it("keeps generated publishing handoff approval-gated for infrastructure plans", () => {
+    const plan = createTaskDecompositionPlan({
+      taskId: "ci-policy",
+      workspacePath: "/repo",
+      prompt: "Adjust CI infrastructure workflow and turbo configuration.",
+    });
+    const review = plan.children.find((child) => child.taskId === "ci-policy-review");
+
+    expect(review).toMatchObject({
+      requiresApproval: true,
+      riskLevel: "high",
+      allowedToolNames: expect.arrayContaining(["git.push", "github.open_pr"]),
+    });
+    expect(validateTaskDecompositionPlan(plan)).toEqual({ valid: true, issues: [] });
   });
 
   it("validates decomposition quality before graph execution", () => {
