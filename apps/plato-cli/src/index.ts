@@ -432,7 +432,24 @@ async function runCommand(argv: string[], client: OrchestrationClient): Promise<
   if (domain === "tool") {
     return runToolCommand(command, rest);
   }
-  throw new Error("usage: plato task|graph|delegate|review|tool <command>");
+  throw new Error(
+    [
+      "Unknown Plato command.",
+      "",
+      "Usage:",
+      "  plato <command> [options]",
+      "",
+      "Common commands:",
+      "  plato task --help",
+      "  plato graph --help",
+      "  plato delegate --help",
+      "  plato review --help",
+      "  plato tool --help",
+      "  plato config --help",
+      "",
+      "Run plato --help for the full command list.",
+    ].join("\n"),
+  );
 }
 
 async function runTaskCommand(

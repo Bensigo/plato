@@ -12,9 +12,11 @@ After the npm packages are published, install Plato with:
 npm install -g @bensigo/plato-cli
 ```
 
-Then choose the default Codex model for real tasks:
+Then log in with Codex/ChatGPT so real tasks use your subscription, and choose
+the default Codex model:
 
 ```sh
+plato config auth-chatgpt
 plato config set-model gpt-5.4
 plato smoke
 ```

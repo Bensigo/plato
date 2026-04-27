@@ -572,6 +572,8 @@ describe("plato product surface", () => {
 
     expect(runCli).not.toHaveBeenCalled();
     expect(stdout.text).toContain("Plato CLI");
+    expect(stdout.text).toContain("plato config auth-chatgpt");
+    expect(stdout.text).toContain("Log in with Codex/ChatGPT");
     expect(stdout.text).toContain("plato task start --workspace-path");
     expect(stdout.text).toContain("plato config set-model gpt-5.4");
     expect(stdout.text).toContain("--model <name>");
@@ -583,6 +585,8 @@ describe("plato product surface", () => {
 
     const configStdout = new MemoryStream();
     await expect(runPlato(["config", "--help"], { runCli, stdout: configStdout })).resolves.toBe(0);
+    expect(configStdout.text).toContain("plato config auth-chatgpt");
+    expect(configStdout.text).toContain("Use auth-chatgpt for your Codex/ChatGPT subscription");
     expect(configStdout.text).toContain("plato config set-model <model>");
     expect(configStdout.text).toContain("plato config status");
   });
@@ -996,7 +1000,8 @@ describe("plato product surface", () => {
     ).resolves.toBe(1);
 
     expect(opened).toBe(false);
-    expect(stderr.text).toContain("usage: plato task|graph|delegate|review|tool <command>");
+    expect(stderr.text).toContain("Unknown Plato command.");
+    expect(stderr.text).toContain("Run plato --help for the full command list.");
   });
 
   it("does not open the Codex runtime for local delegate planning", async () => {

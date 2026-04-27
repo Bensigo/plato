@@ -14,10 +14,11 @@ Install the CLI from npm:
 npm install -g @bensigo/plato-cli
 ```
 
-Then configure the default model you want Plato to use for real Codex-backed
-tasks:
+Then log in with Codex/ChatGPT so Plato can use your subscription, and configure
+the default model for real Codex-backed tasks:
 
 ```sh
+plato config auth-chatgpt
 plato config set-model gpt-5.4
 plato config status
 ```
