@@ -61,6 +61,11 @@ executable graph input; invalid plans return validation issues and no graph
 input. `plato.create_task_graph` remains the lower-level execution operation for
 already-prepared graph inputs.
 
+For the default delegated execution path, `plato.delegate_task` accepts a
+top-level task brief, generates the decomposition plan, validates it, and starts
+the worker graph only when validation succeeds. The response includes the plan
+and validation result alongside the graph snapshot when execution starts.
+
 Plan validation also checks that documentation requirements carry usable
 Context7 evidence. A requirement must include a Context7 source with a summary
 and version or `checkedAt` freshness marker, or an explicit Context7 gap that

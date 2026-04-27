@@ -25,6 +25,7 @@ import {
 
 export const ORCHESTRATION_SURFACE_OPERATION_NAMES = [
   "start_task",
+  "delegate_task",
   "plan_task_graph",
   "validate_task_graph_plan",
   "list_orchestration_tools",
@@ -56,6 +57,12 @@ export const ORCHESTRATION_SURFACE_TOOLS: readonly OrchestrationSurfaceToolDescr
     name: "plato.start_task",
     operation: "start_task",
     description: "Start a single orchestration task on the selected agent runtime.",
+    readOnly: false,
+  },
+  {
+    name: "plato.delegate_task",
+    operation: "delegate_task",
+    description: "Plan, validate, and start a delegated worker graph from a top-level task brief.",
     readOnly: false,
   },
   {
@@ -166,6 +173,8 @@ export type OrchestrationSurfaceTaskGraphPlanInput =
   | OrchestrationTaskPlanningInput
   | OrchestrationTaskDecompositionPlan;
 
+export type OrchestrationSurfaceDelegateTaskInput = OrchestrationTaskPlanningInput;
+
 export interface OrchestrationSurfaceValidateTaskGraphPlanInput {
   plan: OrchestrationTaskDecompositionPlan;
 }
@@ -216,6 +225,12 @@ export interface OrchestrationSurfaceTaskGraphCreationFromPlanResponse {
   graph?: OrchestrationTaskGraphSnapshot;
 }
 
+export interface OrchestrationSurfaceDelegateTaskResponse {
+  plan: OrchestrationTaskDecompositionPlan;
+  validation: OrchestrationPlanValidationResult;
+  graph?: OrchestrationTaskGraphSnapshot;
+}
+
 export interface OrchestrationSurfaceToolHarnessCatalogResponse {
   tools: OrchestrationToolHarnessDescriptor[];
 }
@@ -244,6 +259,7 @@ export interface OrchestrationSurfaceControlResponse {
 
 export type OrchestrationSurfaceOperationRequest =
   | { operation: "start_task"; input: OrchestrationSurfaceStartTaskInput }
+  | { operation: "delegate_task"; input: OrchestrationSurfaceDelegateTaskInput }
   | { operation: "plan_task_graph"; input: OrchestrationSurfaceTaskGraphPlanInput }
   | { operation: "validate_task_graph_plan"; input: OrchestrationSurfaceValidateTaskGraphPlanInput }
   | { operation: "list_orchestration_tools"; input?: Record<string, never> }
@@ -261,6 +277,7 @@ export type OrchestrationSurfaceOperationRequest =
 
 export type OrchestrationSurfaceOperationResponse =
   | ({ operation: "start_task" } & OrchestrationSurfaceTaskResponse)
+  | ({ operation: "delegate_task" } & OrchestrationSurfaceDelegateTaskResponse)
   | ({ operation: "plan_task_graph" } & OrchestrationSurfaceTaskGraphPlanResponse)
   | ({ operation: "validate_task_graph_plan" } & OrchestrationSurfaceTaskGraphPlanValidationResponse)
   | ({ operation: "list_orchestration_tools" } & OrchestrationSurfaceToolHarnessCatalogResponse)
@@ -333,6 +350,8 @@ export class OrchestrationProductSurface {
     switch (request.operation) {
       case "start_task":
         return { operation: request.operation, ...(await this.startTask(request.input)) };
+      case "delegate_task":
+        return { operation: request.operation, ...(await this.delegateTask(request.input)) };
       case "plan_task_graph":
         return { operation: request.operation, ...(await this.planTaskGraph(request.input)) };
       case "validate_task_graph_plan":
@@ -394,6 +413,20 @@ export class OrchestrationProductSurface {
       plan,
       validation: validateTaskDecompositionPlan(plan, { toolCatalog: this.#toolCatalog }),
     };
+  }
+
+  async delegateTask(
+    input: OrchestrationSurfaceDelegateTaskInput,
+  ): Promise<OrchestrationSurfaceDelegateTaskResponse> {
+    const plan = createTaskDecompositionPlan(input, { toolCatalog: this.#toolCatalog });
+    const { validation, graphInput } = createValidatedGraphInputFromDecompositionPlan(plan, {
+      toolCatalog: this.#toolCatalog,
+    });
+    if (!graphInput) {
+      return { plan, validation };
+    }
+    const graph = await this.#service.createTaskGraph(graphInput);
+    return { plan, validation, graph };
   }
 
   async validateTaskGraphPlan(

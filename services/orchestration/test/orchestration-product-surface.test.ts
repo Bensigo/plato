@@ -33,6 +33,11 @@ describe("OrchestrationProductSurface", () => {
           readOnly: false,
         }),
         expect.objectContaining({
+          name: "plato.delegate_task",
+          operation: "delegate_task",
+          readOnly: false,
+        }),
+        expect.objectContaining({
           name: "plato.get_task_graph_results",
           operation: "get_task_graph_results",
           readOnly: true,
@@ -417,6 +422,85 @@ describe("OrchestrationProductSurface", () => {
       },
     });
     expect(runtime.createdGraphParentIds).toEqual(["parent"]);
+  });
+
+  it("delegates a top-level task by planning, validating, and starting a worker graph", async () => {
+    const runtime = new SurfaceFakeRuntime("default-agent", "test-agent");
+    const surface = new OrchestrationProductSurface(
+      new TaskOrchestrationService({
+        defaultRuntimeId: runtime.runtimeId,
+        runtimes: [runtime],
+      }),
+    );
+
+    await expect(
+      surface.delegateTask({
+        taskId: "m29",
+        workspacePath: "/repo",
+        prompt: "Execute the validated delegate plan through workers.",
+        milestoneId: "M29",
+      }),
+    ).resolves.toMatchObject({
+      plan: {
+        planId: "m29-decomposition-plan",
+        parent: { taskId: "m29" },
+        children: [
+          { taskId: "m29-preflight" },
+          { taskId: "m29-implementation" },
+          { taskId: "m29-review" },
+        ],
+      },
+      validation: { valid: true, issues: [] },
+      graph: {
+        parent: { taskId: "m29" },
+        children: [
+          { taskId: "m29-preflight" },
+          { taskId: "m29-implementation" },
+          { taskId: "m29-review" },
+        ],
+      },
+    });
+    expect(runtime.createdGraphParentIds).toEqual(["m29"]);
+  });
+
+  it("does not start delegated workers when generated plan validation fails", async () => {
+    const runtime = new SurfaceFakeRuntime("default-agent", "test-agent");
+    const surface = new OrchestrationProductSurface(
+      new TaskOrchestrationService({
+        defaultRuntimeId: runtime.runtimeId,
+        runtimes: [runtime],
+      }),
+      {
+        toolCatalog: [
+          {
+            name: "search_repo",
+            title: "Search Repo",
+            description: "Search repository text and filenames.",
+            mode: "read",
+            riskLevel: "low",
+            failureModes: ["search_failed"],
+          },
+        ],
+      },
+    );
+
+    await expect(
+      surface.delegateTask({
+        taskId: "m29",
+        workspacePath: "/repo",
+        prompt: "Execute the validated delegate plan through workers.",
+      }),
+    ).resolves.toMatchObject({
+      plan: { planId: "m29-decomposition-plan" },
+      validation: {
+        valid: false,
+        issues: expect.arrayContaining([
+          expect.objectContaining({ code: "UNKNOWN_ALLOWED_TOOL" }),
+        ]),
+      },
+    });
+    expect(runtime.startedTaskIds).toEqual([]);
+    expect(runtime.createdGraphParentIds).toEqual([]);
   });
 
   it("plans a validated read-only decomposition from a top-level task brief", async () => {

@@ -223,6 +223,9 @@ core path to "Plato works as an orchestration layer."
 
 ## Immediate Next Step
 
-The next implementation milestone should extend Milestone 5: MCP and CLI Product Surface.
+The next implementation milestone is M29: Real Delegate Execution.
 
-The agent-agnostic boundary is now in place. The next smallest useful step is wiring the product surface to a real runtime bootstrap while preserving the rule that MCP and CLI handlers speak Plato orchestration contracts instead of Codex-specific runner internals.
+M29 should wire the default delegate flow from a top-level task brief to a
+reviewable plan, validation gate, worker graph start, and status inspection
+while preserving the rule that MCP and CLI handlers speak Plato orchestration
+contracts instead of Codex-specific runner internals.
