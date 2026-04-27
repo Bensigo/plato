@@ -51,6 +51,25 @@ plato delegate plan --task-id m28 --workspace-path /repo --prompt "Break this in
 The response shape is `{ "plan": ..., "validation": ... }`, using the
 deterministic planner from `@plato/orchestration`.
 
+After review, start execution through the validated plan gate:
+
+```sh
+plato graph start-plan --plan-json "$PLAN_JSON"
+```
+
+Invalid plans return validation issues and do not start a graph.
+
+To convert a reviewed plan into graph input for execution, use:
+
+```sh
+plato graph validate --plan-json '<plan-json>'
+```
+
+The validation command returns `{ "validation": ..., "graphInput": ... }` only
+when the decomposition plan is valid. Invalid plans return validation issues and
+omit `graphInput`; `plato graph start` remains the lower-level command for
+already-prepared graph inputs.
+
 Both MCP entrypoints use stdio transport. Do not write normal logs to stdout in
 this process; stdout is reserved for MCP JSON-RPC messages.
 
@@ -77,6 +96,7 @@ Example local agent configuration:
 - `plato.start_task`
 - `plato.plan_task_graph`
 - `plato.validate_task_graph_plan`
+- `plato.create_task_graph_from_plan`
 - `plato.create_task_graph`
 - `plato.get_task`
 - `plato.list_tasks`
