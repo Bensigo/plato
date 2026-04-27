@@ -103,12 +103,17 @@ const startTaskSchema = z.object({
   contextPackage: contextPackageSchema,
 });
 
-const delegateTaskPlanSchema = startTaskSchema.extend({
+const taskPlanningSchema = startTaskSchema.extend({
   planId: z.string().min(1).optional(),
+  summary: z.string().min(1).optional(),
   milestoneId: z.string().min(1).optional(),
+  documentation: z.array(documentationRequirementSchema).optional(),
   writeScopePaths: z.array(z.string().min(1)).optional(),
   verificationCommands: z.array(z.string().min(1)).optional(),
+  acceptanceCriteria: z.array(z.string().min(1)).optional(),
 });
+
+const delegateTaskPlanSchema = taskPlanningSchema;
 
 const planParentSchema = startTaskSchema.extend({
   agent: z.object({ runtimeId: z.string().min(1) }).optional(),
@@ -145,6 +150,8 @@ const taskGraphPlanSchema = z.object({
   children: z.array(plannedGraphChildSchema).min(1),
   documentation: z.array(documentationRequirementSchema).optional(),
 });
+
+const planTaskGraphInputSchema = z.union([taskGraphPlanSchema, taskPlanningSchema]);
 
 const validateTaskGraphPlanSchema = z.object({
   plan: taskGraphPlanSchema,
@@ -210,8 +217,8 @@ export function createPlatoMcpServer(client: OrchestrationClient): McpServer {
   registerTool(server, "plato.delegate_task_plan", delegateTaskPlanSchema, (input) =>
     delegateTaskPlan(client, delegateTaskPlanInputFromSurfaceInput(input)),
   );
-  registerTool(server, "plato.plan_task_graph", taskGraphPlanSchema, (input) => {
-    const plan = taskGraphPlanFromSurfaceInput(input);
+  registerTool(server, "plato.plan_task_graph", planTaskGraphInputSchema, (input) => {
+    const plan = planTaskGraphFromSurfaceInput(input);
     return {
       plan,
       validation: validateTaskDecompositionPlan(plan),
@@ -684,6 +691,14 @@ function taskGraphPlanFromSurfaceInput(
       agent: selectorFrom({ runtimeId: runtimeId ?? agent?.runtimeId }),
     },
   };
+}
+
+function planTaskGraphFromSurfaceInput(
+  input: z.infer<typeof planTaskGraphInputSchema>,
+): OrchestrationTaskDecompositionPlan {
+  return "children" in input
+    ? taskGraphPlanFromSurfaceInput(input)
+    : createTaskDecompositionPlan(delegateTaskPlanInputFromSurfaceInput(input));
 }
 
 function requireFound<T>(value: T | undefined, taskId: string): T {

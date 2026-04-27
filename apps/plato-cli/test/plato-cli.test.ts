@@ -432,6 +432,31 @@ describe("plato product surface", () => {
           validation: { valid: true, issues: [] },
         });
 
+      const briefPlanResult = await client.callTool({
+        name: "plato.plan_task_graph",
+        arguments: {
+          taskId: "m28",
+          workspacePath: "/repo",
+          prompt: "Break this into reviewable milestones",
+          runtimeId: "codex-local",
+        },
+      });
+      const briefPlanContent = briefPlanResult.content as Array<{ type: string; text?: string }>;
+      expect(JSON.parse(
+        briefPlanContent[0]?.type === "text" ? briefPlanContent[0].text ?? "null" : "null",
+      )).toMatchObject({
+        plan: {
+          planId: "m28-decomposition-plan",
+          parent: { taskId: "m28", agent: { runtimeId: "codex-local" } },
+          children: [
+            { taskId: "m28-preflight" },
+            { taskId: "m28-implementation" },
+            { taskId: "m28-review" },
+          ],
+        },
+        validation: { valid: true, issues: [] },
+      });
+
       const delegateResult = await client.callTool({
         name: "plato.delegate_task_plan",
         arguments: {
