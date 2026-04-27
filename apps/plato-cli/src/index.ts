@@ -6,10 +6,13 @@ import type {
   AgentRuntimeSelector,
   CreateOrchestrationGraphInput,
   OrchestrationEvent,
+  OrchestrationContextPackageInput,
+  OrchestrationPlanValidationResult,
   OrchestrationSurfaceToolDescriptor,
   OrchestrationTaskDecompositionPlan,
   OrchestrationTaskGraphResultSnapshot,
   OrchestrationTaskGraphSnapshot,
+  OrchestrationTaskPlanningInput,
   OrchestrationTaskRecord,
   OrchestrationTaskState,
   OrchestrationToolHarnessDescriptor,
@@ -18,6 +21,7 @@ import type {
 import {
   DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG,
   ORCHESTRATION_SURFACE_TOOLS,
+  createTaskDecompositionPlan,
   createGraphInputFromDecompositionPlan,
   validateTaskDecompositionPlan,
 } from "@plato/orchestration";
@@ -99,6 +103,18 @@ const startTaskSchema = z.object({
   contextPackage: contextPackageSchema,
 });
 
+const taskPlanningSchema = startTaskSchema.extend({
+  planId: z.string().min(1).optional(),
+  summary: z.string().min(1).optional(),
+  milestoneId: z.string().min(1).optional(),
+  documentation: z.array(documentationRequirementSchema).optional(),
+  writeScopePaths: z.array(z.string().min(1)).optional(),
+  verificationCommands: z.array(z.string().min(1)).optional(),
+  acceptanceCriteria: z.array(z.string().min(1)).optional(),
+});
+
+const delegateTaskPlanSchema = taskPlanningSchema;
+
 const planParentSchema = startTaskSchema.extend({
   agent: z.object({ runtimeId: z.string().min(1) }).optional(),
 });
@@ -135,6 +151,8 @@ const taskGraphPlanSchema = z.object({
   documentation: z.array(documentationRequirementSchema).optional(),
 });
 
+const planTaskGraphInputSchema = z.union([taskGraphPlanSchema, taskPlanningSchema]);
+
 const validateTaskGraphPlanSchema = z.object({
   plan: taskGraphPlanSchema,
 });
@@ -156,6 +174,12 @@ const rejectSchema = taskLookupSchema.extend({
 type PlatoToolDescriptor =
   | OrchestrationSurfaceToolDescriptor
   | {
+      name: "plato.delegate_task_plan";
+      operation: "delegate_task_plan";
+      description: string;
+      readOnly: true;
+    }
+  | {
       name: "plato.list_tools";
       operation: "list_tools";
       description: string;
@@ -163,6 +187,12 @@ type PlatoToolDescriptor =
     };
 
 const PLATO_TOOL_CATALOG: readonly PlatoToolDescriptor[] = [
+  {
+    name: "plato.delegate_task_plan",
+    operation: "delegate_task_plan",
+    description: "Create and validate a reviewable decomposition plan for a top-level task without execution.",
+    readOnly: true,
+  },
   ...ORCHESTRATION_SURFACE_TOOLS,
   {
     name: "plato.list_tools",
@@ -184,8 +214,11 @@ export function createPlatoMcpServer(client: OrchestrationClient): McpServer {
   registerTool(server, "plato.start_task", startTaskSchema, (input) =>
     client.startTask(startTaskInputFromSurfaceInput(input)),
   );
-  registerTool(server, "plato.plan_task_graph", taskGraphPlanSchema, (input) => {
-    const plan = taskGraphPlanFromSurfaceInput(input);
+  registerTool(server, "plato.delegate_task_plan", delegateTaskPlanSchema, (input) =>
+    delegateTaskPlan(client, delegateTaskPlanInputFromSurfaceInput(input)),
+  );
+  registerTool(server, "plato.plan_task_graph", planTaskGraphInputSchema, (input) => {
+    const plan = planTaskGraphFromSurfaceInput(input);
     return {
       plan,
       validation: validateTaskDecompositionPlan(plan),
@@ -306,10 +339,13 @@ async function runCommand(argv: string[], client: OrchestrationClient): Promise<
   if (domain === "graph") {
     return runGraphCommand(command, rest, client);
   }
+  if (domain === "delegate") {
+    return runDelegateCommand(command, rest, client);
+  }
   if (domain === "tool") {
     return runToolCommand(command, rest);
   }
-  throw new Error("usage: plato task|graph|tool <command>");
+  throw new Error("usage: plato task|graph|delegate|tool <command>");
 }
 
 async function runTaskCommand(
@@ -345,6 +381,32 @@ async function runTaskCommand(
       return client.rejectTaskAction(requireFlag(flags, "task-id"), requireFlag(flags, "reason"), selector);
     default:
       throw new Error("usage: plato task start|status|list|events|interrupt|resume|approve|reject");
+  }
+}
+
+async function runDelegateCommand(
+  command: string | undefined,
+  argv: string[],
+  client: OrchestrationClient,
+): Promise<unknown> {
+  const flags = parseFlags(argv);
+  const selector = selectorFrom({ runtimeId: flags["runtime-id"] });
+  switch (command) {
+    case "plan":
+      return delegateTaskPlan(client, {
+        taskId: requireFlag(flags, "task-id"),
+        workspacePath: requireFlag(flags, "workspace-path"),
+        prompt: requireFlag(flags, "prompt"),
+        priority: optionalInteger(flags.priority, "priority"),
+        agent: selector,
+        contextPackage: parseOptionalContextPackage(flags["context-json"]),
+        planId: flags["plan-id"],
+        milestoneId: flags["milestone-id"],
+        writeScopePaths: parseOptionalCsv(flags["write-scope"]),
+        verificationCommands: parseOptionalCsv(flags["verification-command"]),
+      });
+    default:
+      throw new Error("usage: plato delegate plan");
   }
 }
 
@@ -423,6 +485,22 @@ function parseTaskGraphPlan(
         },
       }
     : plan;
+}
+
+interface DelegateTaskPlanResponse {
+  plan: OrchestrationTaskDecompositionPlan;
+  validation: OrchestrationPlanValidationResult;
+}
+
+async function delegateTaskPlan(
+  _client: OrchestrationClient,
+  input: OrchestrationTaskPlanningInput,
+): Promise<DelegateTaskPlanResponse> {
+  const plan = createTaskDecompositionPlan(input);
+  return {
+    plan,
+    validation: validateTaskDecompositionPlan(plan),
+  };
 }
 
 function parseGraphInput(
@@ -530,6 +608,31 @@ function optionalInteger(value: string | undefined, label: string): number | und
   return parsed;
 }
 
+function parseOptionalJson(value: string | undefined, label: string): unknown {
+  if (value === undefined) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${label} must be valid JSON: ${detail}`);
+  }
+}
+
+function parseOptionalCsv(value: string | undefined): string[] | undefined {
+  return value
+    ?.split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseOptionalContextPackage(value: string | undefined): OrchestrationContextPackageInput | undefined {
+  return contextPackageSchema.parse(parseOptionalJson(value, "context-json")) as
+    | OrchestrationContextPackageInput
+    | undefined;
+}
+
 function selectorFrom(input: { runtimeId?: string }): AgentRuntimeSelector | undefined {
   return input.runtimeId ? { runtimeId: input.runtimeId } : undefined;
 }
@@ -549,6 +652,16 @@ function parseOptionalTaskState(value: string | undefined): OrchestrationTaskSta
 }
 
 function startTaskInputFromSurfaceInput(input: z.infer<typeof startTaskSchema>): StartOrchestrationTaskInput {
+  const { runtimeId, ...taskInput } = input;
+  return {
+    ...taskInput,
+    agent: selectorFrom({ runtimeId }),
+  };
+}
+
+function delegateTaskPlanInputFromSurfaceInput(
+  input: z.infer<typeof delegateTaskPlanSchema>,
+): OrchestrationTaskPlanningInput {
   const { runtimeId, ...taskInput } = input;
   return {
     ...taskInput,
@@ -578,6 +691,14 @@ function taskGraphPlanFromSurfaceInput(
       agent: selectorFrom({ runtimeId: runtimeId ?? agent?.runtimeId }),
     },
   };
+}
+
+function planTaskGraphFromSurfaceInput(
+  input: z.infer<typeof planTaskGraphInputSchema>,
+): OrchestrationTaskDecompositionPlan {
+  return "children" in input
+    ? taskGraphPlanFromSurfaceInput(input)
+    : createTaskDecompositionPlan(delegateTaskPlanInputFromSurfaceInput(input));
 }
 
 function requireFound<T>(value: T | undefined, taskId: string): T {

@@ -151,6 +151,67 @@ describe("plato product surface", () => {
     });
   });
 
+  it("creates a delegate task plan from the CLI without opening orchestration execution", async () => {
+    const client = new FakeOrchestrationClient();
+    const stdout = new MemoryStream();
+
+    await expect(
+      runPlatoCli(
+        [
+          "delegate",
+          "plan",
+          "--task-id",
+          "m28",
+          "--workspace-path",
+          "/repo",
+          "--prompt",
+          "Break this into reviewable milestones",
+          "--runtime-id",
+          "codex-local",
+        ],
+        { client, stdout },
+      ),
+    ).resolves.toBe(0);
+
+    expect(client.opened).toBe(false);
+    expect(client.startedTasks).toEqual([]);
+    expect(client.createdGraphs).toEqual([]);
+    expect(JSON.parse(stdout.text)).toMatchObject({
+      plan: {
+        planId: "m28-decomposition-plan",
+        parent: {
+          taskId: "m28",
+          workspacePath: "/repo",
+          prompt: "Break this into reviewable milestones",
+          agent: { runtimeId: "codex-local" },
+        },
+        children: [
+          {
+            taskId: "m28-preflight",
+            allowedToolNames: expect.arrayContaining(["inspect_workspace", "read_contract", "list_tests"]),
+          },
+          {
+            taskId: "m28-implementation",
+            writeScope: { paths: ["/repo"] },
+            allowedToolNames: expect.arrayContaining([
+              "context7.resolve_library",
+              "context7.get_docs",
+              "apply_patch",
+              "run_tests",
+              "run_typecheck",
+            ]),
+          },
+          {
+            taskId: "m28-review",
+            allowedToolNames: expect.arrayContaining(["request_review", "git.push", "github.open_pr"]),
+            requiresApproval: true,
+          },
+        ],
+      },
+      validation: { valid: true, issues: [] },
+    });
+  });
+
   it("filters CLI task lists by orchestration state", async () => {
     const client = new FakeOrchestrationClient();
     client.tasks = [
@@ -338,6 +399,7 @@ describe("plato product surface", () => {
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining([
+          "plato.delegate_task_plan",
           "plato.list_tools",
           "plato.list_tasks",
           "plato.list_orchestration_tools",
@@ -346,6 +408,9 @@ describe("plato product surface", () => {
         ]),
       );
       expect(tools.tools.find((tool) => tool.name === "plato.list_tools")).toMatchObject({
+        annotations: { readOnlyHint: true },
+      });
+      expect(tools.tools.find((tool) => tool.name === "plato.delegate_task_plan")).toMatchObject({
         annotations: { readOnlyHint: true },
       });
 
@@ -366,6 +431,56 @@ describe("plato product surface", () => {
           plan: { planId: "m28-plan" },
           validation: { valid: true, issues: [] },
         });
+
+      const briefPlanResult = await client.callTool({
+        name: "plato.plan_task_graph",
+        arguments: {
+          taskId: "m28",
+          workspacePath: "/repo",
+          prompt: "Break this into reviewable milestones",
+          runtimeId: "codex-local",
+        },
+      });
+      const briefPlanContent = briefPlanResult.content as Array<{ type: string; text?: string }>;
+      expect(JSON.parse(
+        briefPlanContent[0]?.type === "text" ? briefPlanContent[0].text ?? "null" : "null",
+      )).toMatchObject({
+        plan: {
+          planId: "m28-decomposition-plan",
+          parent: { taskId: "m28", agent: { runtimeId: "codex-local" } },
+          children: [
+            { taskId: "m28-preflight" },
+            { taskId: "m28-implementation" },
+            { taskId: "m28-review" },
+          ],
+        },
+        validation: { valid: true, issues: [] },
+      });
+
+      const delegateResult = await client.callTool({
+        name: "plato.delegate_task_plan",
+        arguments: {
+          taskId: "m28",
+          workspacePath: "/repo",
+          prompt: "Break this into reviewable milestones",
+          runtimeId: "codex-local",
+        },
+      });
+      const delegateContent = delegateResult.content as Array<{ type: string; text?: string }>;
+      expect(JSON.parse(
+        delegateContent[0]?.type === "text" ? delegateContent[0].text ?? "null" : "null",
+      )).toMatchObject({
+        plan: {
+          planId: "m28-decomposition-plan",
+          parent: { taskId: "m28", agent: { runtimeId: "codex-local" } },
+          children: [
+            { taskId: "m28-preflight" },
+            { taskId: "m28-implementation" },
+            { taskId: "m28-review" },
+          ],
+        },
+        validation: { valid: true, issues: [] },
+      });
 
       const validationResult = await client.callTool({
         name: "plato.validate_task_graph_plan",
@@ -461,7 +576,40 @@ describe("plato product surface", () => {
     ).resolves.toBe(1);
 
     expect(opened).toBe(false);
-    expect(stderr.text).toContain("usage: plato task|graph|tool <command>");
+    expect(stderr.text).toContain("usage: plato task|graph|delegate|tool <command>");
+  });
+
+  it("does not open the Codex runtime for local delegate planning", async () => {
+    let opened = false;
+    const stdout = new MemoryStream();
+
+    await expect(
+      runPlatoCliWithRuntime(
+        [
+          "delegate",
+          "plan",
+          "--task-id",
+          "m28",
+          "--workspace-path",
+          "/repo",
+          "--prompt",
+          "Break this into reviewable milestones",
+        ],
+        {
+          stdout,
+          openCodexRuntime: () => {
+            opened = true;
+            throw new Error("runtime should not open");
+          },
+        },
+      ),
+    ).resolves.toBe(0);
+
+    expect(opened).toBe(false);
+    expect(JSON.parse(stdout.text)).toMatchObject({
+      plan: { planId: "m28-decomposition-plan", parent: { taskId: "m28" } },
+      validation: { valid: true, issues: [] },
+    });
   });
 
   it("does not open the Codex runtime for commands that fail local flag validation", async () => {

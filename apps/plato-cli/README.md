@@ -40,6 +40,17 @@ The read-only worker tool harness catalog is available without opening a runtime
 plato tool catalog
 ```
 
+The delegate planner entrypoint turns a top-level task into a reviewable
+decomposition plan and validates it without starting tasks or opening the
+runtime-backed client:
+
+```sh
+plato delegate plan --task-id m28 --workspace-path /repo --prompt "Break this into reviewable milestones"
+```
+
+The response shape is `{ "plan": ..., "validation": ... }`, using the
+deterministic planner from `@plato/orchestration`.
+
 Both MCP entrypoints use stdio transport. Do not write normal logs to stdout in
 this process; stdout is reserved for MCP JSON-RPC messages.
 
@@ -62,6 +73,7 @@ Example local agent configuration:
 
 ## Tool Catalog
 
+- `plato.delegate_task_plan`
 - `plato.start_task`
 - `plato.plan_task_graph`
 - `plato.validate_task_graph_plan`
