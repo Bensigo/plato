@@ -173,19 +173,105 @@ export interface CreateTaskDecompositionPlanOptions {
   toolCatalog?: OrchestrationToolHarnessCatalog;
 }
 
+type TaskDecompositionPolicyKind =
+  | "cli_mcp"
+  | "backend_service"
+  | "docs"
+  | "frontend"
+  | "infrastructure";
+
+interface TaskDecompositionPolicy {
+  kind: TaskDecompositionPolicyKind;
+  label: string;
+  defaultWriteScopePaths: string[];
+  verificationCommands: string[];
+  acceptanceCriteria: string[];
+}
+
+const TASK_DECOMPOSITION_POLICIES: Record<TaskDecompositionPolicyKind, TaskDecompositionPolicy> = {
+  cli_mcp: {
+    kind: "cli_mcp",
+    label: "CLI/MCP adapter",
+    defaultWriteScopePaths: ["apps/plato-cli/src", "apps/plato-cli/test"],
+    verificationCommands: [
+      "pnpm --filter @plato/cli test",
+      "pnpm --filter @plato/cli typecheck",
+      "pnpm --filter @plato/orchestration test",
+      "pnpm --filter @plato/orchestration typecheck",
+    ],
+    acceptanceCriteria: [
+      "CLI and MCP adapter changes preserve neutral plato.* operation contracts.",
+      "Planning and validation commands remain read-only until a reviewed graph is explicitly started.",
+    ],
+  },
+  backend_service: {
+    kind: "backend_service",
+    label: "Backend service",
+    defaultWriteScopePaths: ["services"],
+    verificationCommands: [
+      "pnpm --filter @plato/orchestration test",
+      "pnpm --filter @plato/orchestration typecheck",
+    ],
+    acceptanceCriteria: [
+      "Service behavior is covered by focused tests at the owning service boundary.",
+      "Failure modes are explicit in contracts, validation results, or test expectations.",
+    ],
+  },
+  docs: {
+    kind: "docs",
+    label: "Documentation",
+    defaultWriteScopePaths: ["README.md", "docs", "services/orchestration/README.md"],
+    verificationCommands: ["pnpm --filter @plato/orchestration typecheck"],
+    acceptanceCriteria: [
+      "Documentation names the affected user-facing or service contract accurately.",
+      "Examples, commands, and workflow steps match the implemented behavior.",
+    ],
+  },
+  frontend: {
+    kind: "frontend",
+    label: "Frontend application",
+    defaultWriteScopePaths: ["apps/desktop/src", "apps/desktop/test"],
+    verificationCommands: [
+      "pnpm --filter @plato/desktop test",
+      "pnpm --filter @plato/desktop typecheck",
+    ],
+    acceptanceCriteria: [
+      "User-facing flows expose clear loading, empty, error, and success states.",
+      "Interactive UI changes are checked at representative desktop and mobile viewport sizes.",
+    ],
+  },
+  infrastructure: {
+    kind: "infrastructure",
+    label: "Infrastructure",
+    defaultWriteScopePaths: [".github", "turbo.json", "pnpm-workspace.yaml", "package.json"],
+    verificationCommands: ["pnpm typecheck", "pnpm test"],
+    acceptanceCriteria: [
+      "Infrastructure changes are scoped to repository configuration or deployment boundaries.",
+      "Generated artifacts, secrets, and machine-local paths are excluded from the milestone branch.",
+    ],
+  },
+};
+
+const DEFAULT_TASK_DECOMPOSITION_POLICY = TASK_DECOMPOSITION_POLICIES.backend_service;
+
 export function createTaskDecompositionPlan(
   input: OrchestrationTaskPlanningInput,
   options: CreateTaskDecompositionPlanOptions = {},
 ): OrchestrationTaskDecompositionPlan {
-  const writeScopePaths = normalizeWriteScopePaths(input.writeScopePaths, input.workspacePath);
+  const taskPolicy = selectTaskDecompositionPolicy(input);
+  const defaultWriteScopePaths = defaultWriteScopePathsForPolicy(input, taskPolicy);
+  const writeScopePaths = normalizeWriteScopePaths(
+    input.writeScopePaths,
+    input.workspacePath,
+    defaultWriteScopePaths,
+  );
   const verificationCommands = uniqueValues([
     ...(input.verificationCommands ?? []),
-    "pnpm --filter @plato/orchestration test",
-    "pnpm --filter @plato/orchestration typecheck",
-    "pnpm --filter @plato/orchestration lint",
+    ...taskPolicy.verificationCommands,
   ]);
   const acceptanceCriteria = uniqueValues([
     ...(input.acceptanceCriteria ?? []),
+    ...taskPolicy.acceptanceCriteria,
     "The decomposition plan validates with validateTaskDecompositionPlan before graph creation.",
     "Worker prompts state write boundaries, allowed tools, dependencies, Context7 expectations, verification, review, and PR steps.",
     "The planner is read-only and does not start runtime tasks or create task graphs.",
@@ -207,6 +293,7 @@ export function createTaskDecompositionPlan(
     `Top-level task: ${input.prompt}`,
     `Workspace: ${input.workspacePath}`,
     `Milestone: ${input.milestoneId ?? "unspecified"}`,
+    `Task class policy: ${taskPolicy.label}`,
     `Write boundary: ${writeScopePaths.join(", ")}`,
     `Context7 requirement: resolve relevant libraries and record docs or explicit gaps before implementation.`,
     `Review requirement: keep work PR-sized, push the milestone branch, and open a pull request after verification.`,
@@ -219,6 +306,7 @@ export function createTaskDecompositionPlan(
       prompt: workerPrompt({
         title: "Preflight and contract discovery",
         task: input.prompt,
+        taskPolicy,
         boundaries: writeScopePaths,
         allowedTools: ["inspect_workspace", "search_repo", "read_file", "read_contract", "list_tests"],
         dependencies: [],
@@ -250,6 +338,7 @@ export function createTaskDecompositionPlan(
       prompt: workerPrompt({
         title: "Scoped implementation",
         task: input.prompt,
+        taskPolicy,
         boundaries: writeScopePaths,
         allowedTools: [
           "inspect_workspace",
@@ -300,6 +389,7 @@ export function createTaskDecompositionPlan(
       prompt: workerPrompt({
         title: "Verification, review, and PR handoff",
         task: input.prompt,
+        taskPolicy,
         boundaries: writeScopePaths,
         allowedTools: [
           "search_repo",
@@ -835,9 +925,118 @@ function findChildDependencyCycle(
   return undefined;
 }
 
-function normalizeWriteScopePaths(paths: string[] | undefined, workspacePath: string): string[] {
+function selectTaskDecompositionPolicy(input: OrchestrationTaskPlanningInput): TaskDecompositionPolicy {
+  const promptHaystack = [input.prompt, input.summary, input.milestoneId]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const writeScopeHaystack = (input.writeScopePaths ?? []).join(" ").toLowerCase();
+  const haystack = [promptHaystack, writeScopeHaystack].join(" ");
+  const writeScopePaths = input.writeScopePaths ?? [];
+
+  if (
+    hasAnyPolicySignal(promptHaystack, ["readme", "documentation", "docs", "markdown"]) ||
+    (writeScopePaths.length > 0 &&
+      writeScopePaths.every((path) => /(^|\/)(docs|readme)|\.md$/i.test(path.trim())))
+  ) {
+    return TASK_DECOMPOSITION_POLICIES.docs;
+  }
+  if (hasAnyPolicySignal(haystack, ["mcp", "cli", "command", "plato-cli", "apps/plato-cli"])) {
+    return TASK_DECOMPOSITION_POLICIES.cli_mcp;
+  }
+  if (hasAnyPolicySignal(haystack, ["frontend", "ui", "ux", "desktop", "react", "screen", "apps/desktop"])) {
+    return TASK_DECOMPOSITION_POLICIES.frontend;
+  }
+  if (
+    hasAnyPolicySignal(haystack, [
+      ".github",
+      "ci",
+      "deploy",
+      "deployment",
+      "docker",
+      "infra",
+      "infrastructure",
+      "package.json",
+      "pnpm-workspace",
+      "turbo",
+      "workflow",
+    ])
+  ) {
+    return TASK_DECOMPOSITION_POLICIES.infrastructure;
+  }
+  if (hasAnyPolicySignal(haystack, ["service", "services/", "backend", "contract", "orchestration", "runner"])) {
+    return TASK_DECOMPOSITION_POLICIES.backend_service;
+  }
+  return DEFAULT_TASK_DECOMPOSITION_POLICY;
+}
+
+function defaultWriteScopePathsForPolicy(
+  input: OrchestrationTaskPlanningInput,
+  policy: TaskDecompositionPolicy,
+): string[] {
+  if (policy.kind !== "backend_service") {
+    return policy.defaultWriteScopePaths;
+  }
+
+  const haystack = [
+    input.prompt,
+    input.summary,
+    input.milestoneId,
+    ...(input.writeScopePaths ?? []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (hasAnyPolicySignal(haystack, ["codex-runner", "runner"])) {
+    return ["services/codex-runner/src", "services/codex-runner/test"];
+  }
+  if (hasAnyPolicySignal(haystack, ["orchestration", "planner", "plan validation"])) {
+    return ["services/orchestration/src", "services/orchestration/test"];
+  }
+  if (hasAnyPolicySignal(haystack, ["config", "auth status"])) {
+    return ["services/config/src", "services/config/test"];
+  }
+  if (hasAnyPolicySignal(haystack, ["database", "sqlite", "migration", "db"])) {
+    return ["services/db"];
+  }
+  if (hasAnyPolicySignal(haystack, ["github-server", "github server"])) {
+    return ["services/github-server"];
+  }
+
+  return policy.defaultWriteScopePaths;
+}
+
+function hasAnyPolicySignal(haystack: string, needles: string[]): boolean {
+  return needles.some((needle) => matchesPolicySignal(haystack, needle));
+}
+
+function matchesPolicySignal(haystack: string, needle: string): boolean {
+  const normalizedNeedle = needle.trim().toLowerCase();
+  if (normalizedNeedle.length === 0) {
+    return false;
+  }
+  if (/[/.]/.test(normalizedNeedle)) {
+    return haystack.includes(normalizedNeedle);
+  }
+  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(normalizedNeedle)}($|[^a-z0-9])`, "i").test(haystack);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeWriteScopePaths(
+  paths: string[] | undefined,
+  workspacePath: string,
+  defaultPaths: string[],
+): string[] {
   const normalized = uniqueValues(paths?.map((path) => path.trim()).filter(Boolean) ?? []);
-  return normalized.length > 0 ? normalized : [workspacePath];
+  if (normalized.length > 0) {
+    return normalized;
+  }
+  const defaultScope = uniqueValues(defaultPaths);
+  return defaultScope.length > 0 ? defaultScope : [workspacePath];
 }
 
 function uniqueValues(values: string[]): string[] {
@@ -894,6 +1093,7 @@ function contextPackageForChild(role: string, summary: string) {
 function workerPrompt(input: {
   title: string;
   task: string;
+  taskPolicy: TaskDecompositionPolicy;
   boundaries: string[];
   allowedTools: string[];
   dependencies: string[];
@@ -906,6 +1106,7 @@ function workerPrompt(input: {
     input.title,
     "",
     `Task: ${input.task}`,
+    `Task class policy: ${input.taskPolicy.label}`,
     `Dependencies: ${input.dependencies.length > 0 ? input.dependencies.join(", ") : "none"}`,
     `Write boundaries: ${input.boundaries.join(", ")}`,
     `Allowed tools: ${input.allowedTools.join(", ")}`,

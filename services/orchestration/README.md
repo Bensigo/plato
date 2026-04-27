@@ -53,6 +53,14 @@ contains three deterministic children:
 - verification, review, push, and pull-request handoff, marked approval-gated
   because it may use external publishing tools.
 
+The planner classifies each top-level brief into a conservative task template
+before choosing default write scopes, verification commands, and acceptance
+criteria. The current templates cover CLI/MCP adapter work, backend services,
+documentation, frontend applications, and infrastructure. Caller-supplied
+`writeScopePaths`, `verificationCommands`, and `acceptanceCriteria` are
+preserved and augmented by the selected template; when no write scope is
+provided, the template supplies a narrower default than the whole workspace.
+
 The product surface immediately validates generated plans with
 `validateTaskDecompositionPlan`. Use
 `createValidatedGraphInputFromDecompositionPlan` or
