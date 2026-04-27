@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -503,6 +504,8 @@ describe("plato product surface", () => {
         "/tmp/plato-smoke/runner.sqlite",
         "--log-path",
         "/tmp/plato-smoke/events.json",
+        "--model",
+        "gpt-5.4",
         "--max-concurrent-tasks",
         "2",
       ], { runCli }),
@@ -511,6 +514,7 @@ describe("plato product surface", () => {
     expect(runCli).toHaveBeenCalledWith(["task", "list"], {
       dbPath: "/tmp/plato-smoke/runner.sqlite",
       logPath: "/tmp/plato-smoke/events.json",
+      model: "gpt-5.4",
       maxConcurrentTasks: 2,
       stdout: undefined,
       stderr: undefined,
@@ -556,6 +560,61 @@ describe("plato product surface", () => {
 
     expect(runSmoke).not.toHaveBeenCalled();
     expect(stderr.text).toBe("usage: plato smoke\n");
+  });
+
+  it("prints useful top-level and command help without opening the runtime", async () => {
+    const stdout = new MemoryStream();
+    const runCli = vi.fn(async () => {
+      throw new Error("runtime should not open");
+    });
+
+    await expect(runPlato(["--help"], { runCli, stdout })).resolves.toBe(0);
+
+    expect(runCli).not.toHaveBeenCalled();
+    expect(stdout.text).toContain("Plato CLI");
+    expect(stdout.text).toContain("plato task start --workspace-path");
+    expect(stdout.text).toContain("plato config set-model gpt-5.4");
+    expect(stdout.text).toContain("--model <name>");
+
+    const taskStdout = new MemoryStream();
+    await expect(runPlato(["task", "--help"], { runCli, stdout: taskStdout })).resolves.toBe(0);
+    expect(taskStdout.text).toContain("plato task start --workspace-path <path>");
+    expect(taskStdout.text).toContain("plato task events --task-id <id>");
+
+    const configStdout = new MemoryStream();
+    await expect(runPlato(["config", "--help"], { runCli, stdout: configStdout })).resolves.toBe(0);
+    expect(configStdout.text).toContain("plato config set-model <model>");
+    expect(configStdout.text).toContain("plato config status");
+  });
+
+  it("configures the default model through the Plato CLI", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "plato-cli-config-"));
+    try {
+      const stdout = new MemoryStream();
+      const stderr = new MemoryStream();
+      const configPath = `${tempDir}/config.json`;
+      const secretsPath = `${tempDir}/secrets.json`;
+
+      await expect(
+        runPlato([
+          "config",
+          "set-model",
+          "gpt-5.4",
+          "--config-path",
+          configPath,
+          "--secrets-path",
+          secretsPath,
+        ], { stdout, stderr }),
+      ).resolves.toBe(0);
+
+      expect(stderr.text).toBe("");
+      expect(JSON.parse(stdout.text)).toMatchObject({
+        configPath,
+        codexModel: "gpt-5.4",
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("runs a deterministic local task smoke path through CLI handlers", async () => {

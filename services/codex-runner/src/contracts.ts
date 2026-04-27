@@ -336,6 +336,7 @@ export interface AgentSession {
     handlers?: AgentSessionHandlers,
   ): Promise<ManagedSession>;
   interrupt(sessionId: string): Promise<void>;
+  drain?(): Promise<void>;
 }
 
 export interface AgentSessionFactory {

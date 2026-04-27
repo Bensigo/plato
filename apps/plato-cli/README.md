@@ -6,6 +6,34 @@ This package speaks `@plato/orchestration` contracts only. Command handlers and
 MCP tool handlers must not import `@plato/codex-runner`; Codex is one runtime
 adapter behind the orchestration boundary, not the product API.
 
+## Install
+
+Install the CLI from npm:
+
+```sh
+npm install -g @plato/cli
+```
+
+Then configure the default model you want Plato to use for real Codex-backed
+tasks:
+
+```sh
+plato config set-model gpt-5.4
+plato config status
+```
+
+Run a quick local health check:
+
+```sh
+plato smoke
+```
+
+Start a real task in the current repository:
+
+```sh
+plato task start --workspace-path "$PWD" --prompt "Inspect this repo and summarize the package layout."
+```
+
 ## Runtime Bootstrap
 
 `src/index.ts` owns the neutral handler surface and accepts an injected

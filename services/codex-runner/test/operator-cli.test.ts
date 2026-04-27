@@ -11,7 +11,7 @@ import type {
   SessionEvent,
 } from "../src/contracts.js";
 import type { OperatorRuntime, OperatorRuntimeOptions, RunnerOperatorClient } from "../src/cli.js";
-import { resolveCodexOptionsFromConfig, runCodexRunnerCli } from "../src/cli.js";
+import { resolveCodexModelFromConfig, resolveCodexOptionsFromConfig, runCodexRunnerCli } from "../src/cli.js";
 
 class BufferWriter {
   value = "";
@@ -107,6 +107,8 @@ describe("runCodexRunnerCli", () => {
         "/tmp/plato-config.json",
         "--secrets-path",
         "/tmp/plato-secrets.json",
+        "--model",
+        "gpt-5.4",
       ],
       {
         cwd: "/workspace",
@@ -133,6 +135,7 @@ describe("runCodexRunnerCli", () => {
         logPath: undefined,
         configPath: "/tmp/plato-config.json",
         secretsPath: "/tmp/plato-secrets.json",
+        model: "gpt-5.4",
         maxConcurrentTasks: 5,
       },
     ]);
@@ -415,6 +418,8 @@ describe("runCodexRunnerCli", () => {
         "/tmp/plato-graph-config.json",
         "--secrets-path",
         "/tmp/plato-graph-secrets.json",
+        "--model",
+        "gpt-5.4",
         "--child",
         "task-child:Build API:3",
         "--child",
@@ -464,6 +469,7 @@ describe("runCodexRunnerCli", () => {
         logPath: undefined,
         configPath: "/tmp/plato-graph-config.json",
         secretsPath: "/tmp/plato-graph-secrets.json",
+        model: "gpt-5.4",
         maxConcurrentTasks: 7,
       },
     ]);
@@ -1105,6 +1111,49 @@ describe("runCodexRunnerCli", () => {
         },
       });
       await expect(resolveCodexOptionsFromConfig({ configPath, secretsPath })).resolves.toBeUndefined();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("configures and clears the default Codex model", async () => {
+    const tempDir = await createTempDir("codex-runner-config-");
+    try {
+      const configPath = `${tempDir}/config.json`;
+      const secretsPath = `${tempDir}/secrets.json`;
+      const stdout = new BufferWriter();
+      const stderr = new BufferWriter();
+
+      const setExitCode = await runCodexRunnerCli(
+        ["config", "set-model", "gpt-5.4", "--config-path", configPath, "--secrets-path", secretsPath],
+        { stdout, stderr },
+      );
+
+      expect(setExitCode).toBe(0);
+      expect(stderr.value).toBe("");
+      expect(JSON.parse(stdout.value)).toEqual({
+        configPath,
+        codexModel: "gpt-5.4",
+        codexAuth: {
+          configured: false,
+        },
+      });
+      await expect(resolveCodexModelFromConfig({ configPath, secretsPath })).resolves.toBe("gpt-5.4");
+
+      const clearStdout = new BufferWriter();
+      const clearExitCode = await runCodexRunnerCli(
+        ["config", "clear-model", "--config-path", configPath, "--secrets-path", secretsPath],
+        { stdout: clearStdout, stderr },
+      );
+
+      expect(clearExitCode).toBe(0);
+      expect(JSON.parse(clearStdout.value)).toEqual({
+        configPath,
+        codexAuth: {
+          configured: false,
+        },
+      });
+      await expect(resolveCodexModelFromConfig({ configPath, secretsPath })).resolves.toBeUndefined();
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

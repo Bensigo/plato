@@ -1,11 +1,17 @@
 {
   "name": "@plato/cli",
-  "private": true,
   "version": "0.1.0",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js",
       "default": "./dist/src/index.js"
     }
@@ -15,11 +21,12 @@
     "plato-mcp": "./dist/src/mcp.js"
   },
   "main": "./dist/src/index.js",
-  "types": "./src/index.ts",
+  "types": "./dist/src/index.d.ts",
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "dev": "echo 'plato cli dev not wired yet'",
     "lint": "oxlint .",
+    "prepack": "npm run build",
     "smoke": "pnpm build && node dist/src/cli.js smoke",
     "test": "vitest run --dir test",
     "typecheck": "tsc --project tsconfig.json --noEmit"

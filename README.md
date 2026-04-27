@@ -4,6 +4,27 @@ Plato is a monorepo for a local-first CLI/MCP orchestration layer that helps per
 
 The repo is split into user-facing applications in `apps/` and backend or infrastructure services in `services/`, with each workspace owning a clear slice of behavior.
 
+## Install The CLI
+
+After the npm packages are published, install Plato with:
+
+```sh
+npm install -g @plato/cli
+```
+
+Then choose the default Codex model for real tasks:
+
+```sh
+plato config set-model gpt-5.4
+plato smoke
+```
+
+Start a real task in a repository:
+
+```sh
+plato task start --workspace-path "$PWD" --prompt "Inspect this repo and summarize the package layout."
+```
+
 ## What Lives Here
 
 ```text

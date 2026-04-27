@@ -26,6 +26,7 @@ import { DefaultCodexRuntimeManager } from "./runtime/codex-runtime-manager.js";
 import { CodexSdkBackedAgentSessionFactory } from "./session/codex-sdk-backed-agent-session.js";
 import { openCodexRunnerPersistence } from "./store/sqlite-runner-persistence.js";
 import { GitWorktreeManager } from "./worktree/git-worktree-manager.js";
+import { isMainModule } from "./bin.js";
 
 type Writer = {
   write(chunk: string): void;
@@ -53,7 +54,7 @@ export interface RunnerOperatorClient {
 
 export interface OperatorRuntime {
   service: RunnerOperatorClient;
-  close(): void;
+  close(): Promise<void> | void;
 }
 
 export interface OperatorRuntimeOptions {
@@ -61,6 +62,7 @@ export interface OperatorRuntimeOptions {
   logPath?: string;
   configPath?: string;
   secretsPath?: string;
+  model?: string;
   cwd?: string;
   maxConcurrentTasks?: number;
 }
@@ -153,10 +155,16 @@ async function handleConfig(
       return handleConfigSetOpenAIKey(rest, options);
     case "clear-openai-key":
       return handleConfigClearOpenAIKey(rest, options);
+    case "set-model":
+      return handleConfigSetModel(rest, options);
+    case "clear-model":
+      return handleConfigClearModel(rest, options);
     case "auth-chatgpt":
       return handleConfigAuthChatGpt(rest, options);
     default:
-      throw new Error("config requires a subcommand: status, set-openai-key, clear-openai-key, or auth-chatgpt");
+      throw new Error(
+        "config requires a subcommand: status, set-openai-key, clear-openai-key, set-model, clear-model, or auth-chatgpt",
+      );
   }
 }
 
@@ -254,6 +262,39 @@ async function handleConfigClearOpenAIKey(
   return 0;
 }
 
+async function handleConfigSetModel(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout">,
+): Promise<number> {
+  const parsed = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      "config-path": { type: "string" },
+      "secrets-path": { type: "string" },
+    },
+  });
+  const [model] = parsed.positionals;
+  if (!model) {
+    throw new Error("config set-model requires a model name");
+  }
+  const service = createFileBackedPlatoConfigService({
+    configPath: resolveOptionalPath(options.cwd, parsed.values["config-path"]),
+    secretsPath: resolveOptionalPath(options.cwd, parsed.values["secrets-path"]),
+  });
+  writeJson(options.stdout ?? process.stdout, await service.setCodexModel(model));
+  return 0;
+}
+
+async function handleConfigClearModel(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout">,
+): Promise<number> {
+  const service = openConfigService(argv, options.cwd);
+  writeJson(options.stdout ?? process.stdout, await service.clearCodexModel());
+  return 0;
+}
+
 async function handleGraph(
   argv: string[],
   options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout" | "openRuntime">,
@@ -291,6 +332,7 @@ async function handleGraphStart(
       "log-path": { type: "string" },
       "config-path": { type: "string" },
       "secrets-path": { type: "string" },
+      model: { type: "string" },
     },
   });
   const prompt = parsed.values.prompt?.trim();
@@ -305,6 +347,7 @@ async function handleGraphStart(
     logPath: parsed.values["log-path"],
     configPath: parsed.values["config-path"],
     secretsPath: parsed.values["secrets-path"],
+    model: parsed.values.model,
     maxConcurrentTasks: parseOptionalInteger(parsed.values["max-concurrent-tasks"], "max concurrent tasks"),
   });
 
@@ -325,7 +368,7 @@ async function handleGraphStart(
     writeJson(options.stdout ?? process.stdout, graph);
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -364,7 +407,7 @@ async function handleGraphStatus(
     writeJson(options.stdout ?? process.stdout, graph);
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -429,13 +472,14 @@ async function loadGraphResults(
 
     return snapshot;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
 export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}): Promise<OperatorRuntime> {
   const storagePaths = resolveStoragePaths(options.cwd ?? process.cwd(), options.dbPath, options.logPath);
   const persistence = openCodexRunnerPersistence({ filePath: storagePaths.dbPath });
+  const configuredModel = options.model ?? await resolveCodexModelFromConfig(options);
   const service = new CodexRunnerService({
     store: persistence.store,
     sessionStore: persistence.sessionStore,
@@ -443,6 +487,7 @@ export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}):
     logStreamer: new FileLogStreamer(storagePaths.logPath),
     agentSessionFactory: new CodexSdkBackedAgentSessionFactory({
       codexOptions: await resolveCodexOptionsFromConfig(options),
+      threadOptions: configuredModel ? { model: configuredModel } : undefined,
     }),
     runtimeManager: new DefaultCodexRuntimeManager(),
     maxConcurrentTasks: options.maxConcurrentTasks,
@@ -450,10 +495,20 @@ export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}):
 
   return {
     service,
-    close: () => {
+    close: async () => {
+      await service.drain();
       persistence.close();
     },
   };
+}
+
+export async function resolveCodexModelFromConfig(
+  options: Pick<OperatorRuntimeOptions, "configPath" | "secretsPath" | "cwd"> = {},
+): Promise<string | undefined> {
+  return createFileBackedPlatoConfigService({
+    configPath: resolveOptionalPath(options.cwd, options.configPath),
+    secretsPath: resolveOptionalPath(options.cwd, options.secretsPath),
+  }).resolveCodexModel();
 }
 
 export async function resolveCodexOptionsFromConfig(
@@ -489,6 +544,7 @@ async function handleStart(
       "log-path": { type: "string" },
       "config-path": { type: "string" },
       "secrets-path": { type: "string" },
+      model: { type: "string" },
     },
   });
   const prompt = parsed.values.prompt?.trim();
@@ -502,6 +558,7 @@ async function handleStart(
     logPath: parsed.values["log-path"],
     configPath: parsed.values["config-path"],
     secretsPath: parsed.values["secrets-path"],
+    model: parsed.values.model,
     maxConcurrentTasks: parseOptionalInteger(parsed.values["max-concurrent-tasks"], "max concurrent tasks"),
   });
 
@@ -520,7 +577,7 @@ async function handleStart(
     writeJson(options.stdout ?? process.stdout, { task });
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -567,7 +624,7 @@ async function handleStatus(
     writeJson(options.stdout ?? process.stdout, { tasks });
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -603,7 +660,7 @@ async function handleEvents(
     writeJson(options.stdout ?? process.stdout, { taskId, events });
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -640,7 +697,7 @@ async function handleInterrupt(
     writeJson(options.stdout ?? process.stdout, snapshot ?? { taskId, interrupted: true });
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -677,7 +734,7 @@ async function handleResume(
     writeJson(options.stdout ?? process.stdout, snapshot ?? { taskId });
     return 0;
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 }
 
@@ -888,6 +945,8 @@ function buildHelpText(): string {
     "  config status",
     "  config set-openai-key (--api-key-stdin | --api-key-env <name> | --api-key <key>)",
     "  config clear-openai-key",
+    "  config set-model <model>",
+    "  config clear-model",
     "  config auth-chatgpt [--device-code] [--codex-path <path>]",
     "",
     "Storage:",
@@ -895,10 +954,11 @@ function buildHelpText(): string {
     "  --log-path <path>  Defaults to the events.json file next to the database",
     "  --config-path <path>   Defaults to ~/.plato/config.json for auth config",
     "  --secrets-path <path>  Defaults to ~/.plato/secrets.json for auth secrets",
+    "  --model <name>         Overrides the configured Codex model for this run",
   ].join("\n");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const exitCode = await runCodexRunnerCli(process.argv.slice(2));
   process.exitCode = exitCode;
 }
