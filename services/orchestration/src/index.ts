@@ -480,4 +480,5 @@ export class TaskOrchestrationService {
 }
 
 export * from "./plan.js";
+export * from "./review.js";
 export * from "./surface.js";

@@ -397,6 +397,65 @@ describe("plato product surface", () => {
     expect(JSON.parse(stdout.text)).toEqual(buildTaskGraphResults());
   });
 
+  it("prints operator review summaries for plans and graphs from the CLI", async () => {
+    const client = new FakeOrchestrationClient();
+    client.graph = buildTaskGraphSnapshot();
+    client.graphResults.set("parent", buildTaskGraphResults());
+    client.tasks = [buildTask("approval-task", "/repo", "Approve it", undefined, "awaiting_approval")];
+    const planStdout = new MemoryStream();
+    const graphStdout = new MemoryStream();
+    const approvalsStdout = new MemoryStream();
+
+    await expect(
+      runPlatoCli(["review", "plan", "--plan-json", JSON.stringify(buildInvalidTaskGraphPlan())], {
+        client,
+        stdout: planStdout,
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      runPlatoCli(["review", "graph", "--task-id", "parent", "--runtime-id", "codex-local"], {
+        client,
+        stdout: graphStdout,
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      runPlatoCli(["review", "approvals"], {
+        client,
+        stdout: approvalsStdout,
+      }),
+    ).resolves.toBe(0);
+
+    expect(JSON.parse(planStdout.text)).toMatchObject({
+      kind: "plan_review",
+      validation: {
+        valid: false,
+        failureCount: 2,
+      },
+      workerBoundaries: expect.arrayContaining([
+        expect.objectContaining({ taskId: "child-a", allowedToolNames: [] }),
+      ]),
+    });
+    expect(JSON.parse(graphStdout.text)).toMatchObject({
+      kind: "graph_review",
+      parentTaskId: "parent",
+      finalSynthesis: {
+        readiness: "ready",
+        synthesisId: "synthesis-parent",
+        classification: "partial",
+      },
+      workerStatuses: expect.arrayContaining([
+        expect.objectContaining({
+          taskId: "child-b",
+          dependencyTaskIds: ["child-a"],
+          resultClassification: "partial",
+        }),
+      ]),
+    });
+    expect(JSON.parse(approvalsStdout.text)).toEqual([
+      expect.objectContaining({ taskId: "approval-task", state: "awaiting_approval" }),
+    ]);
+  });
+
   it("creates an MCP server without depending on Codex runner internals", () => {
     const server = createPlatoMcpServer(new FakeOrchestrationClient());
 
@@ -513,9 +572,26 @@ describe("plato product surface", () => {
         statusReadable: true,
         eventsReadable: true,
         listed: true,
+        graphStarted: true,
+        graphStatusReadable: true,
+        graphResultsReadable: true,
+        graphEventsReadable: true,
+        interrupted: true,
+        resumed: true,
+        interruptResumeEventsReadable: true,
       },
     });
     expect(summary.eventTypes).toEqual(["task.queued", "task.started", "task.completed"]);
+    expect(summary.graphEventTypes).toEqual([
+      "task.queued",
+      "task.started",
+      "task.completed",
+      "task.graph.created",
+      "task.graph.result.collected",
+      "task.graph.result.collected",
+      "task.graph.synthesized",
+      "task.graph.completed",
+    ]);
   });
 
   it("serves the Plato MCP tool catalog over an MCP transport", async () => {
@@ -536,6 +612,9 @@ describe("plato product surface", () => {
         expect.arrayContaining([
           "plato.delegate_task_plan",
           "plato.delegate_task",
+          "plato.review_task_graph_plan",
+          "plato.review_task_graph",
+          "plato.list_pending_approvals",
           "plato.create_task_graph_from_plan",
           "plato.list_tools",
           "plato.list_tasks",
@@ -728,6 +807,65 @@ describe("plato product surface", () => {
           ? graphResultsResourceContent.text
           : "null",
       )).toEqual(buildTaskGraphResults());
+
+      const planReviewResult = await client.callTool({
+        name: "plato.review_task_graph_plan",
+        arguments: { plan: buildInvalidTaskGraphPlan() as unknown as Record<string, unknown> },
+      });
+      const planReviewContent = planReviewResult.content as Array<{ type: string; text?: string }>;
+      expect(JSON.parse(
+        planReviewContent[0]?.type === "text" ? planReviewContent[0].text ?? "null" : "null",
+      )).toMatchObject({
+        kind: "plan_review",
+        validation: { valid: false, failureCount: 2 },
+      });
+
+      orchestration.graph = buildTaskGraphSnapshot();
+      const graphReviewResult = await client.callTool({
+        name: "plato.review_task_graph",
+        arguments: { taskId: "parent", runtimeId: "codex-local" },
+      });
+      const graphReviewContent = graphReviewResult.content as Array<{ type: string; text?: string }>;
+      expect(JSON.parse(
+        graphReviewContent[0]?.type === "text" ? graphReviewContent[0].text ?? "null" : "null",
+      )).toMatchObject({
+        kind: "graph_review",
+        parentTaskId: "parent",
+        finalSynthesis: { readiness: "ready", classification: "partial" },
+      });
+
+      orchestration.tasks = [buildTask("approval-task", "/repo", "Approve it", undefined, "awaiting_approval")];
+      const approvalResult = await client.callTool({
+        name: "plato.list_pending_approvals",
+        arguments: {},
+      });
+      const approvalContent = approvalResult.content as Array<{ type: string; text?: string }>;
+      expect(JSON.parse(
+        approvalContent[0]?.type === "text" ? approvalContent[0].text ?? "null" : "null",
+      )).toEqual([
+        expect.objectContaining({ taskId: "approval-task", state: "awaiting_approval" }),
+      ]);
+
+      const approvalResource = await client.readResource({ uri: "plato://reviews/approvals" });
+      const approvalResourceContent = approvalResource.contents[0];
+      expect(JSON.parse(
+        approvalResourceContent && "text" in approvalResourceContent
+          ? approvalResourceContent.text
+          : "null",
+      )).toEqual([
+        expect.objectContaining({ taskId: "approval-task", state: "awaiting_approval" }),
+      ]);
+
+      const graphReviewResource = await client.readResource({ uri: "plato://reviews/graphs/parent" });
+      const graphReviewResourceContent = graphReviewResource.contents[0];
+      expect(JSON.parse(
+        graphReviewResourceContent && "text" in graphReviewResourceContent
+          ? graphReviewResourceContent.text
+          : "null",
+      )).toMatchObject({
+        kind: "graph_review",
+        parentTaskId: "parent",
+      });
     } finally {
       await client.close();
       await server.close();
@@ -794,7 +932,7 @@ describe("plato product surface", () => {
     ).resolves.toBe(1);
 
     expect(opened).toBe(false);
-    expect(stderr.text).toContain("usage: plato task|graph|delegate|tool <command>");
+    expect(stderr.text).toContain("usage: plato task|graph|delegate|review|tool <command>");
   });
 
   it("does not open the Codex runtime for local delegate planning", async () => {
@@ -1005,6 +1143,7 @@ class FakeOrchestrationClient implements OrchestrationClient {
   readonly createdGraphs: CreateOrchestrationGraphInput[] = [];
   readonly graphResultLookups: Array<{ taskId: string; selector?: AgentRuntimeSelector }> = [];
   readonly graphResults = new Map<string, OrchestrationTaskGraphResultSnapshot>();
+  graph?: OrchestrationTaskGraphSnapshot;
   tasks: OrchestrationTaskRecord[] = [];
   opened = false;
 
@@ -1033,7 +1172,7 @@ class FakeOrchestrationClient implements OrchestrationClient {
 
   async getTaskGraph(): Promise<OrchestrationTaskGraphSnapshot | undefined> {
     this.opened = true;
-    return undefined;
+    return this.graph;
   }
 
   async getTaskGraphResults(
@@ -1164,6 +1303,23 @@ function buildInvalidTaskGraphPlan(): OrchestrationTaskDecompositionPlan {
         verification: { commands: [], acceptanceCriteria: [] },
       },
     ],
+  };
+}
+
+function buildTaskGraphSnapshot(): OrchestrationTaskGraphSnapshot {
+  return {
+    parent: buildTask("parent", "/repo", "Coordinate", { runtimeId: "codex-local" }, "running"),
+    children: [
+      {
+        ...buildTask("child-a", "/repo", "Implement contracts.", { runtimeId: "codex-local" }, "completed"),
+        decomposition: { kind: "subtask", parentTaskId: "parent" },
+      },
+      {
+        ...buildTask("child-b", "/repo", "Expose CLI.", { runtimeId: "codex-local" }, "completed"),
+        decomposition: { kind: "subtask", parentTaskId: "parent", dependencyTaskIds: ["child-a"] },
+      },
+    ],
+    state: "completed",
   };
 }
 
