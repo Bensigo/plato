@@ -32,7 +32,9 @@ task, produce a reviewable plan, gate execution on validation, run worker tasks,
 synthesize the final outcome, and expose enough state for an operator or calling
 agent to understand what happened.
 
-The deterministic smoke is the required fast check for CLI/MCP surface changes.
-The real Codex smoke in [local-task-smoke.md](/Users/macbook/work/plato/docs/local-task-smoke.md)
-is the follow-up manual check when local Codex auth and a disposable workspace
-are available.
+The deterministic smoke is the required fast check for CLI handler changes.
+MCP surface changes should also run the MCP transport/tool tests in
+`apps/plato-cli/test/plato-cli.test.ts`. The real Codex smoke in
+[local-task-smoke.md](/Users/macbook/work/plato/docs/local-task-smoke.md) is
+the follow-up manual check when local Codex auth and a disposable workspace are
+available.

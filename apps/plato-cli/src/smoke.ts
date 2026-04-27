@@ -94,9 +94,20 @@ export async function runPlatoSmoke(options: RunPlatoSmokeOptions = {}): Promise
     const controlEventTypes = eventList(controlEvents).map((event) => event.type);
     const delegateResponse = delegateTaskResponse(delegated);
     const delegatedGraph = delegateResponse?.graph;
-    const childCount = delegatedGraph?.children.length ?? 0;
     const resultSnapshot = graphResultSnapshot(graphResults);
     const reviewSnapshot = graphReviewSnapshot(graphReview);
+    const planChildTaskIds = delegateResponse?.plan.children.map((child) => child.taskId) ?? [];
+    const graphChildTaskIds = delegatedGraph?.children.map((child) => child.taskId) ?? [];
+    const resultTaskIds = resultSnapshot?.results.map((result) => result.taskId) ?? [];
+    const synthesisResultTaskIds = resultSnapshot?.synthesis?.resultIds.map((resultId) =>
+      resultId.replace(/-smoke-result$/, "")
+    ) ?? [];
+    const reviewWorkerTaskIds = reviewSnapshot?.workerStatuses.map((worker) => worker.taskId) ?? [];
+    const childCount = planChildTaskIds.length;
+    const graphMatchesPlan = childCount > 0 && sameValues(planChildTaskIds, graphChildTaskIds);
+    const resultsMatchPlan = sameValues(planChildTaskIds, resultTaskIds);
+    const synthesisMatchesPlan = sameValues(planChildTaskIds, synthesisResultTaskIds);
+    const reviewMatchesPlan = sameValues(planChildTaskIds, reviewWorkerTaskIds);
     const summary: PlatoSmokeSummary = {
       taskId,
       graphTaskId,
@@ -112,12 +123,13 @@ export async function runPlatoSmoke(options: RunPlatoSmokeOptions = {}): Promise
         delegateValidationReadable: delegateResponse?.validation.valid === true,
         graphStarted: isGraph(delegatedGraph)
           && delegatedGraph.parent.taskId === graphTaskId
-          && delegatedGraph.children.length > 0,
+          && graphMatchesPlan,
         graphStatusReadable: isGraph(graphStatus) && graphStatus.parent.taskId === graphTaskId,
         graphResultsReadable: resultSnapshot !== undefined
-          && resultSnapshot.results.length === childCount
+          && resultsMatchPlan
           && resultSnapshot.synthesis?.classification === "completed",
         finalOutcomeReadable: childCount > 0
+          && synthesisMatchesPlan
           && (resultSnapshot?.synthesis?.summary.includes(`${childCount} deterministic smoke results`) ?? false),
         graphEventsReadable: graphEventTypes.includes("task.graph.created")
           && graphEventTypes.includes("task.graph.result.collected")
@@ -125,7 +137,7 @@ export async function runPlatoSmoke(options: RunPlatoSmokeOptions = {}): Promise
           && graphEventTypes.includes("task.graph.completed"),
         reviewReadable: reviewSnapshot?.finalSynthesis.readiness === "ready"
           && reviewSnapshot.finalSynthesis.missingResultTaskIds.length === 0
-          && reviewSnapshot.workerStatuses.length === childCount,
+          && reviewMatchesPlan,
         interrupted: isInterruptResult(interrupted) && interrupted.taskId === taskId,
         resumed: isTask(resumed) && resumed.taskId === taskId && resumed.state === "running",
         interruptResumeEventsReadable: controlEventTypes.includes("task.interrupted")
@@ -407,6 +419,10 @@ function graphReviewSnapshot(value: unknown): OrchestrationGraphReviewSnapshot |
   return Boolean(value && typeof value === "object" && "finalSynthesis" in value)
     ? value as OrchestrationGraphReviewSnapshot
     : undefined;
+}
+
+function sameValues(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value) => right.includes(value));
 }
 
 function isInterruptResult(value: unknown): value is { taskId: string; interrupted: boolean } {
