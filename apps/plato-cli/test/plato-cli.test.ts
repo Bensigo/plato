@@ -9,6 +9,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 import { runPlato } from "../src/cli.js";
 import { runPlatoMcp } from "../src/mcp.js";
+import { runPlatoSmoke, type PlatoSmokeSummary } from "../src/smoke.js";
 import { createPlatoMcpServer, runPlatoCli, type OrchestrationClient } from "../src/index.js";
 import {
   createPlatoMcpServerWithRuntime,
@@ -160,6 +161,91 @@ describe("plato product surface", () => {
 
     expect(runMcp).not.toHaveBeenCalled();
     expect(stderr.text).toBe("usage: plato mcp\n");
+  });
+
+  it("passes runtime storage options to task CLI commands", async () => {
+    const runCli = vi.fn(async () => 0);
+
+    await expect(
+      runPlato([
+        "task",
+        "list",
+        "--db-path",
+        "/tmp/plato-smoke/runner.sqlite",
+        "--log-path",
+        "/tmp/plato-smoke/events.json",
+        "--max-concurrent-tasks",
+        "2",
+      ], { runCli }),
+    ).resolves.toBe(0);
+
+    expect(runCli).toHaveBeenCalledWith(["task", "list"], {
+      dbPath: "/tmp/plato-smoke/runner.sqlite",
+      logPath: "/tmp/plato-smoke/events.json",
+      maxConcurrentTasks: 2,
+      stdout: undefined,
+      stderr: undefined,
+    });
+  });
+
+  it("passes runtime storage options to the MCP server command", async () => {
+    const runMcp = vi.fn(async () => 0);
+
+    await expect(
+      runPlato([
+        "mcp",
+        "--db-path",
+        "/tmp/plato-smoke/runner.sqlite",
+        "--log-path",
+        "/tmp/plato-smoke/events.json",
+      ], { runMcp }),
+    ).resolves.toBe(0);
+
+    expect(runMcp).toHaveBeenCalledWith({
+      dbPath: "/tmp/plato-smoke/runner.sqlite",
+      logPath: "/tmp/plato-smoke/events.json",
+    });
+  });
+
+  it("dispatches plato smoke to the deterministic smoke runner", async () => {
+    const runCli = vi.fn(async () => 1);
+    const runSmoke = vi.fn(async () => 0);
+
+    await expect(runPlato(["smoke"], { runCli, runSmoke })).resolves.toBe(0);
+
+    expect(runSmoke).toHaveBeenCalledTimes(1);
+    expect(runCli).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid plato smoke arguments before running smoke checks", async () => {
+    const runSmoke = vi.fn(async () => {
+      throw new Error("smoke should not run");
+    });
+    const stderr = new MemoryStream();
+
+    await expect(runPlato(["smoke", "--bad-flag"], { runSmoke, stderr })).resolves.toBe(1);
+
+    expect(runSmoke).not.toHaveBeenCalled();
+    expect(stderr.text).toBe("usage: plato smoke\n");
+  });
+
+  it("runs a deterministic local task smoke path through CLI handlers", async () => {
+    const stdout = new MemoryStream();
+
+    await expect(runPlatoSmoke({ cwd: "/repo", stdout })).resolves.toBe(0);
+
+    const summary = JSON.parse(stdout.text) as PlatoSmokeSummary;
+    expect(summary).toMatchObject({
+      taskId: "plato-smoke-task",
+      workspacePath: "/repo",
+      checks: {
+        started: true,
+        statusReadable: true,
+        eventsReadable: true,
+        listed: true,
+      },
+    });
+    expect(summary.eventTypes).toEqual(["task.queued", "task.started", "task.completed"]);
   });
 
   it("serves the Plato MCP tool catalog over an MCP transport", async () => {

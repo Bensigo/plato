@@ -20,6 +20,7 @@
     "build": "tsc --project tsconfig.json",
     "dev": "echo 'plato cli dev not wired yet'",
     "lint": "oxlint .",
+    "smoke": "pnpm build && node dist/src/cli.js smoke",
     "test": "vitest run --dir test",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
