@@ -21,6 +21,8 @@ import type {
 import {
   DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG,
   ORCHESTRATION_SURFACE_TOOLS,
+  buildOrchestrationGraphReviewSnapshot,
+  buildOrchestrationPlanReviewSnapshot,
   createTaskDecompositionPlan,
   createValidatedGraphInputFromDecompositionPlan,
   validateTaskDecompositionPlan,
@@ -162,6 +164,8 @@ const taskLookupSchema = z.object({
   runtimeId: runtimeIdSchema,
 });
 
+const reviewTaskGraphPlanSchema = validateTaskGraphPlanSchema;
+
 const listTasksSchema = z.object({
   runtimeId: runtimeIdSchema,
   state: taskStateSchema,
@@ -184,6 +188,24 @@ type PlatoToolDescriptor =
       operation: "list_tools";
       description: string;
       readOnly: true;
+    }
+  | {
+      name: "plato.review_task_graph_plan";
+      operation: "review_task_graph_plan";
+      description: string;
+      readOnly: true;
+    }
+  | {
+      name: "plato.review_task_graph";
+      operation: "review_task_graph";
+      description: string;
+      readOnly: true;
+    }
+  | {
+      name: "plato.list_pending_approvals";
+      operation: "list_pending_approvals";
+      description: string;
+      readOnly: true;
     };
 
 const PLATO_TOOL_CATALOG: readonly PlatoToolDescriptor[] = [
@@ -198,6 +220,24 @@ const PLATO_TOOL_CATALOG: readonly PlatoToolDescriptor[] = [
     name: "plato.list_tools",
     operation: "list_tools",
     description: "List Plato MCP tool descriptors.",
+    readOnly: true,
+  },
+  {
+    name: "plato.review_task_graph_plan",
+    operation: "review_task_graph_plan",
+    description: "Summarize a task graph plan for operator review without starting execution.",
+    readOnly: true,
+  },
+  {
+    name: "plato.review_task_graph",
+    operation: "review_task_graph",
+    description: "Summarize worker status and final synthesis readiness for a task graph.",
+    readOnly: true,
+  },
+  {
+    name: "plato.list_pending_approvals",
+    operation: "list_pending_approvals",
+    description: "List tasks waiting for approval.",
     readOnly: true,
   },
 ];
@@ -257,6 +297,16 @@ export function createPlatoMcpServer(client: OrchestrationClient): McpServer {
   registerTool(server, "plato.get_task_graph_results", taskLookupSchema, async (input) =>
     requireFound(await client.getTaskGraphResults(input.taskId, selectorFrom(input)), input.taskId),
   );
+  registerTool(server, "plato.review_task_graph_plan", reviewTaskGraphPlanSchema, (input) => {
+    const plan = taskGraphPlanFromSurfaceInput(input.plan);
+    return buildOrchestrationPlanReviewSnapshot(plan, validateTaskDecompositionPlan(plan));
+  });
+  registerTool(server, "plato.review_task_graph", taskLookupSchema, async (input) => {
+    const selector = selectorFrom(input);
+    const graph = requireFound(await client.getTaskGraph(input.taskId, selector), input.taskId);
+    const graphResults = await client.getTaskGraphResults(input.taskId, selector);
+    return buildOrchestrationGraphReviewSnapshot(graph, graphResults);
+  });
   registerTool(server, "plato.list_task_events", taskLookupSchema, (input) =>
     client.listEvents(input.taskId, selectorFrom(input)),
   );
@@ -272,6 +322,9 @@ export function createPlatoMcpServer(client: OrchestrationClient): McpServer {
   );
   registerTool(server, "plato.reject_task_action", rejectSchema, (input) =>
     client.rejectTaskAction(input.taskId, input.reason, selectorFrom(input)),
+  );
+  registerTool(server, "plato.list_pending_approvals", listTasksSchema, async (input) =>
+    filterTasksByState(await client.listTasks(selectorFrom(input)), "awaiting_approval"),
   );
   registerTool(server, "plato.list_tools", z.object({}), () => listToolCatalog());
   registerTool(server, "plato.list_orchestration_tools", z.object({}), () => listOrchestrationToolCatalog());
@@ -290,6 +343,16 @@ export function createPlatoMcpServer(client: OrchestrationClient): McpServer {
       jsonResource(
         "plato://approvals",
         (await client.listTasks()).filter((task) => task.state === "awaiting_approval"),
+      ),
+  );
+  server.registerResource(
+    "review-approvals",
+    "plato://reviews/approvals",
+    { title: "Plato review approval queue", mimeType: "application/json" },
+    async () =>
+      jsonResource(
+        "plato://reviews/approvals",
+        filterTasksByState(await client.listTasks(), "awaiting_approval"),
       ),
   );
   server.registerResource(
@@ -325,6 +388,17 @@ export function createPlatoMcpServer(client: OrchestrationClient): McpServer {
       return jsonResource(uri.href, requireFound(await client.getTaskGraphResults(taskId), taskId));
     },
   );
+  server.registerResource(
+    "graph-review",
+    new ResourceTemplate("plato://reviews/graphs/{taskId}", { list: undefined }),
+    { title: "Plato task graph review", mimeType: "application/json" },
+    async (uri, variables) => {
+      const taskId = templateValue(variables.taskId);
+      const graph = requireFound(await client.getTaskGraph(taskId), taskId);
+      const graphResults = await client.getTaskGraphResults(taskId);
+      return jsonResource(uri.href, buildOrchestrationGraphReviewSnapshot(graph, graphResults));
+    },
+  );
 
   return server;
 }
@@ -352,10 +426,13 @@ async function runCommand(argv: string[], client: OrchestrationClient): Promise<
   if (domain === "delegate") {
     return runDelegateCommand(command, rest, client);
   }
+  if (domain === "review") {
+    return runReviewCommand(command, rest, client);
+  }
   if (domain === "tool") {
     return runToolCommand(command, rest);
   }
-  throw new Error("usage: plato task|graph|delegate|tool <command>");
+  throw new Error("usage: plato task|graph|delegate|review|tool <command>");
 }
 
 async function runTaskCommand(
@@ -475,6 +552,31 @@ async function runGraphCommand(
       );
     default:
       throw new Error("usage: plato graph plan|validate|start-plan|start|status|results|synthesis");
+  }
+}
+
+async function runReviewCommand(
+  command: string | undefined,
+  argv: string[],
+  client: OrchestrationClient,
+): Promise<unknown> {
+  const flags = parseFlags(argv);
+  const selector = selectorFrom({ runtimeId: flags["runtime-id"] });
+  switch (command) {
+    case "plan": {
+      const plan = parseTaskGraphPlan(requireFlag(flags, "plan-json"), selector);
+      return buildOrchestrationPlanReviewSnapshot(plan, validateTaskDecompositionPlan(plan));
+    }
+    case "graph": {
+      const taskId = requireFlag(flags, "task-id");
+      const graph = requireFound(await client.getTaskGraph(taskId, selector), taskId);
+      const graphResults = await client.getTaskGraphResults(taskId, selector);
+      return buildOrchestrationGraphReviewSnapshot(graph, graphResults);
+    }
+    case "approvals":
+      return filterTasksByState(await client.listTasks(selector), "awaiting_approval");
+    default:
+      throw new Error("usage: plato review plan|graph|approvals");
   }
 }
 

@@ -1,6 +1,8 @@
 # Local Task Smoke
 
-M27 adds a repeatable smoke path for Plato's caller-facing task flow.
+M27 adds a repeatable smoke path for Plato's caller-facing task flow. The
+deterministic path has since expanded to cover the M33/M34 graph and control
+surfaces while keeping the same local fake runtime.
 
 The smoke path has two layers:
 
@@ -23,21 +25,41 @@ node dist/src/cli.js smoke
 
 The smoke command drives the real CLI handlers with a deterministic in-memory
 orchestration client. It verifies that a task can be started, inspected through
-status, listed, and inspected through events without requiring Codex auth.
+status, listed, inspected through events, interrupted, and resumed without
+requiring Codex auth. It also starts a small task graph, inspects graph status,
+inspects graph results and synthesis, and checks graph lifecycle events.
 
 Successful output looks like:
 
 ```json
 {
   "taskId": "plato-smoke-task",
+  "graphTaskId": "plato-smoke-graph",
   "workspacePath": "/path/to/plato",
   "checks": {
     "started": true,
     "statusReadable": true,
     "eventsReadable": true,
-    "listed": true
+    "listed": true,
+    "graphStarted": true,
+    "graphStatusReadable": true,
+    "graphResultsReadable": true,
+    "graphEventsReadable": true,
+    "interrupted": true,
+    "resumed": true,
+    "interruptResumeEventsReadable": true
   },
-  "eventTypes": ["task.queued", "task.started", "task.completed"]
+  "eventTypes": ["task.queued", "task.started", "task.completed"],
+  "graphEventTypes": [
+    "task.queued",
+    "task.started",
+    "task.completed",
+    "task.graph.created",
+    "task.graph.result.collected",
+    "task.graph.result.collected",
+    "task.graph.synthesized",
+    "task.graph.completed"
+  ]
 }
 ```
 
