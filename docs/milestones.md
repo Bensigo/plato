@@ -142,6 +142,85 @@ What this unlocks:
 
 Faster and better task completion with more predictable behavior and fewer wasted worker runs.
 
+## Remaining MVP Path
+
+M28 established the reviewable decomposition plan and validation gate. The
+remaining MVP work should focus on turning that plan into a complete orchestration
+loop.
+
+### M29: Real Delegate Execution
+
+Goal: execute validated delegate plans through the worker graph.
+
+Deliverables:
+
+- default flow from top-level task to plan, validation, worker graph start, and status inspection
+- execution through the validated plan gate instead of raw graph inputs
+- worker graph creation from `plato.delegate_task_plan` output
+- tests proving invalid plans do not start workers
+
+### M30: Worker Result Synthesis
+
+Goal: turn parallel worker output into one coordinated parent result.
+
+Deliverables:
+
+- structured worker summaries or result artifacts
+- completed, partial, failed, and conflicted result classifications
+- parent synthesis record that references worker results
+- CLI/MCP inspection for per-worker output and final synthesis
+
+### M31: Smarter Decomposition Policies
+
+Goal: improve decomposition quality beyond the deterministic baseline.
+
+Deliverables:
+
+- task-class templates for CLI/MCP, backend service, docs, frontend, and infrastructure work
+- workspace-specific verification command selection
+- safer default write scopes
+- approval rules based on risk and tool use
+
+### M32: Operator Review UX
+
+Goal: make the review loop usable by humans and calling agents.
+
+Deliverables:
+
+- commands and MCP tools for pending plans, approval-gated steps, worker status, validation failures, and final synthesis
+- clear review output that explains worker boundaries, dependencies, allowed tools, and verification requirements
+- operator-friendly failure messages for blocked or invalid plans
+
+### M33: Runtime Hardening
+
+Goal: make delegated execution resilient enough for MVP use.
+
+Deliverables:
+
+- resume and interruption behavior for delegated task graphs
+- failure propagation and retry policy
+- worktree and session isolation checks
+- richer event history for debugging delegated runs
+
+### M34: MVP End-to-End Smoke
+
+Goal: prove the complete Plato orchestration loop.
+
+Deliverables:
+
+- one CLI command or MCP flow that takes a top-level task, decomposes it, validates it, runs workers, synthesizes results, and exposes the final outcome
+- deterministic smoke coverage for the full loop
+- MVP acceptance documentation
+
+Shortest MVP route:
+
+1. M29: execute validated delegate plans.
+2. M30: synthesize worker results.
+3. M34: prove the end-to-end smoke.
+
+M31 through M33 improve quality and reliability, but M29, M30, and M34 are the
+core path to "Plato works as an orchestration layer."
+
 ## Immediate Next Step
 
 The next implementation milestone should extend Milestone 5: MCP and CLI Product Surface.
