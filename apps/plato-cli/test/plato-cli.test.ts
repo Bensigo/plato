@@ -276,6 +276,59 @@ describe("plato product surface", () => {
     });
   });
 
+  it("starts delegated graph execution from a top-level task brief through the validation gate", async () => {
+    const client = new FakeOrchestrationClient();
+    const stdout = new MemoryStream();
+
+    await expect(
+      runPlatoCli(
+        [
+          "delegate",
+          "start",
+          "--task-id",
+          "m29",
+          "--workspace-path",
+          "/repo",
+          "--prompt",
+          "Execute the validated delegate plan through workers",
+          "--runtime-id",
+          "codex-local",
+        ],
+        { client, stdout },
+      ),
+    ).resolves.toBe(0);
+
+    expect(client.startedTasks).toEqual([]);
+    expect(client.createdGraphs).toHaveLength(1);
+    expect(client.createdGraphs[0]).toMatchObject({
+      parent: {
+        taskId: "m29",
+        workspacePath: "/repo",
+        agent: { runtimeId: "codex-local" },
+      },
+      children: [
+        { taskId: "m29-preflight" },
+        { taskId: "m29-implementation", dependencyTaskIds: ["m29-preflight"] },
+        { taskId: "m29-review", dependencyTaskIds: ["m29-implementation"] },
+      ],
+    });
+    expect(JSON.parse(stdout.text)).toMatchObject({
+      plan: {
+        planId: "m29-decomposition-plan",
+        parent: { taskId: "m29", agent: { runtimeId: "codex-local" } },
+      },
+      validation: { valid: true, issues: [] },
+      graph: {
+        parent: { taskId: "m29" },
+        children: [
+          { taskId: "m29-preflight" },
+          { taskId: "m29-implementation" },
+          { taskId: "m29-review" },
+        ],
+      },
+    });
+  });
+
   it("filters CLI task lists by orchestration state", async () => {
     const client = new FakeOrchestrationClient();
     client.tasks = [
@@ -464,6 +517,7 @@ describe("plato product surface", () => {
       expect(tools.tools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining([
           "plato.delegate_task_plan",
+          "plato.delegate_task",
           "plato.create_task_graph_from_plan",
           "plato.list_tools",
           "plato.list_tasks",
@@ -478,6 +532,7 @@ describe("plato product surface", () => {
       expect(tools.tools.find((tool) => tool.name === "plato.delegate_task_plan")).toMatchObject({
         annotations: { readOnlyHint: true },
       });
+      expect(tools.tools.find((tool) => tool.name === "plato.delegate_task")).toBeDefined();
 
       const result = await client.callTool({
         name: "plato.list_tasks",
@@ -545,6 +600,34 @@ describe("plato product surface", () => {
           ],
         },
         validation: { valid: true, issues: [] },
+      });
+
+      const delegateStartResult = await client.callTool({
+        name: "plato.delegate_task",
+        arguments: {
+          taskId: "m29",
+          workspacePath: "/repo",
+          prompt: "Execute the validated delegate plan through workers",
+          runtimeId: "codex-local",
+        },
+      });
+      const delegateStartContent = delegateStartResult.content as Array<{ type: string; text?: string }>;
+      expect(JSON.parse(
+        delegateStartContent[0]?.type === "text" ? delegateStartContent[0].text ?? "null" : "null",
+      )).toMatchObject({
+        plan: {
+          planId: "m29-decomposition-plan",
+          parent: { taskId: "m29", agent: { runtimeId: "codex-local" } },
+        },
+        validation: { valid: true, issues: [] },
+        graph: {
+          parent: { taskId: "m29" },
+          children: [
+            { taskId: "m29-preflight" },
+            { taskId: "m29-implementation" },
+            { taskId: "m29-review" },
+          ],
+        },
       });
 
       const validationResult = await client.callTool({

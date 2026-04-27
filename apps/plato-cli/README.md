@@ -51,6 +51,17 @@ plato delegate plan --task-id m28 --workspace-path /repo --prompt "Break this in
 The response shape is `{ "plan": ..., "validation": ... }`, using the
 deterministic planner from `@plato/orchestration`.
 
+To run the default delegated execution flow in one step, use:
+
+```sh
+plato delegate start --task-id m29 --workspace-path /repo --prompt "Execute this through workers"
+```
+
+This creates the plan, validates it, and starts the worker graph only when the
+plan passes validation. The response shape is
+`{ "plan": ..., "validation": ..., "graph": ... }`; invalid plans omit
+`graph`.
+
 After review, start execution through the validated plan gate:
 
 ```sh
@@ -93,6 +104,7 @@ Example local agent configuration:
 ## Tool Catalog
 
 - `plato.delegate_task_plan`
+- `plato.delegate_task`
 - `plato.start_task`
 - `plato.plan_task_graph`
 - `plato.validate_task_graph_plan`

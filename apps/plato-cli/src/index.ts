@@ -217,6 +217,9 @@ export function createPlatoMcpServer(client: OrchestrationClient): McpServer {
   registerTool(server, "plato.delegate_task_plan", delegateTaskPlanSchema, (input) =>
     delegateTaskPlan(client, delegateTaskPlanInputFromSurfaceInput(input)),
   );
+  registerTool(server, "plato.delegate_task", delegateTaskPlanSchema, (input) =>
+    delegateTask(client, delegateTaskPlanInputFromSurfaceInput(input)),
+  );
   registerTool(server, "plato.plan_task_graph", planTaskGraphInputSchema, (input) => {
     const plan = planTaskGraphFromSurfaceInput(input);
     return {
@@ -412,8 +415,21 @@ async function runDelegateCommand(
         writeScopePaths: parseOptionalCsv(flags["write-scope"]),
         verificationCommands: parseOptionalCsv(flags["verification-command"]),
       });
+    case "start":
+      return delegateTask(client, {
+        taskId: requireFlag(flags, "task-id"),
+        workspacePath: requireFlag(flags, "workspace-path"),
+        prompt: requireFlag(flags, "prompt"),
+        priority: optionalInteger(flags.priority, "priority"),
+        agent: selector,
+        contextPackage: parseOptionalContextPackage(flags["context-json"]),
+        planId: flags["plan-id"],
+        milestoneId: flags["milestone-id"],
+        writeScopePaths: parseOptionalCsv(flags["write-scope"]),
+        verificationCommands: parseOptionalCsv(flags["verification-command"]),
+      });
     default:
-      throw new Error("usage: plato delegate plan");
+      throw new Error("usage: plato delegate plan|start");
   }
 }
 
@@ -506,6 +522,10 @@ interface DelegateTaskPlanResponse {
   validation: OrchestrationPlanValidationResult;
 }
 
+interface DelegateTaskResponse extends DelegateTaskPlanResponse {
+  graph?: OrchestrationTaskGraphSnapshot;
+}
+
 async function delegateTaskPlan(
   _client: OrchestrationClient,
   input: OrchestrationTaskPlanningInput,
@@ -514,6 +534,22 @@ async function delegateTaskPlan(
   return {
     plan,
     validation: validateTaskDecompositionPlan(plan),
+  };
+}
+
+async function delegateTask(
+  client: OrchestrationClient,
+  input: OrchestrationTaskPlanningInput,
+): Promise<DelegateTaskResponse> {
+  const plan = createTaskDecompositionPlan(input);
+  const { validation, graphInput } = createValidatedGraphInputFromDecompositionPlan(plan);
+  if (!graphInput) {
+    return { plan, validation };
+  }
+  return {
+    plan,
+    validation,
+    graph: await client.createTaskGraph(graphInput),
   };
 }
 
