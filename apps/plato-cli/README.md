@@ -57,6 +57,8 @@ Example local agent configuration:
 ## Tool Catalog
 
 - `plato.start_task`
+- `plato.plan_task_graph`
+- `plato.validate_task_graph_plan`
 - `plato.create_task_graph`
 - `plato.get_task`
 - `plato.list_tasks`

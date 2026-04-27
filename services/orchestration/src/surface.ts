@@ -2,18 +2,26 @@ import type {
   AgentRuntimeSelector,
   CreateOrchestrationGraphChildInput,
   CreateOrchestrationGraphInput,
+  OrchestrationPlanValidationResult,
   OrchestrationEvent,
   OrchestrationGraphState,
   OrchestrationResultClassification,
+  OrchestrationTaskDecompositionPlan,
   OrchestrationTaskGraphResultSnapshot,
   OrchestrationTaskGraphSnapshot,
   OrchestrationTaskRecord,
   OrchestrationTaskState,
   StartOrchestrationTaskInput,
 } from "./index.js";
+import {
+  createGraphInputFromDecompositionPlan,
+  validateTaskDecompositionPlan,
+} from "./plan.js";
 
 export const ORCHESTRATION_SURFACE_OPERATION_NAMES = [
   "start_task",
+  "plan_task_graph",
+  "validate_task_graph_plan",
   "create_task_graph",
   "get_task",
   "get_task_graph",
@@ -42,6 +50,18 @@ export const ORCHESTRATION_SURFACE_TOOLS: readonly OrchestrationSurfaceToolDescr
     operation: "start_task",
     description: "Start a single orchestration task on the selected agent runtime.",
     readOnly: false,
+  },
+  {
+    name: "plato.plan_task_graph",
+    operation: "plan_task_graph",
+    description: "Return a reviewable task graph plan without starting execution.",
+    readOnly: true,
+  },
+  {
+    name: "plato.validate_task_graph_plan",
+    operation: "validate_task_graph_plan",
+    description: "Validate a task graph plan before execution.",
+    readOnly: true,
   },
   {
     name: "plato.create_task_graph",
@@ -123,6 +143,12 @@ export interface OrchestrationSurfaceCreateTaskGraphInput {
   children: OrchestrationSurfaceCreateTaskGraphChildInput[];
 }
 
+export type OrchestrationSurfaceTaskGraphPlanInput = OrchestrationTaskDecompositionPlan;
+
+export interface OrchestrationSurfaceValidateTaskGraphPlanInput {
+  plan: OrchestrationTaskDecompositionPlan;
+}
+
 export interface OrchestrationSurfaceTaskLookupInput {
   taskId: string;
   runtimeId?: string;
@@ -150,6 +176,16 @@ export interface OrchestrationSurfaceTaskGraphResponse {
   graph: OrchestrationTaskGraphSnapshot;
 }
 
+export interface OrchestrationSurfaceTaskGraphPlanResponse {
+  plan: OrchestrationTaskDecompositionPlan;
+  validation: OrchestrationPlanValidationResult;
+}
+
+export interface OrchestrationSurfaceTaskGraphPlanValidationResponse {
+  validation: OrchestrationPlanValidationResult;
+  graphInput?: CreateOrchestrationGraphInput;
+}
+
 export interface OrchestrationSurfaceOptionalTaskGraphResponse {
   graph?: OrchestrationTaskGraphSnapshot;
 }
@@ -174,6 +210,8 @@ export interface OrchestrationSurfaceControlResponse {
 
 export type OrchestrationSurfaceOperationRequest =
   | { operation: "start_task"; input: OrchestrationSurfaceStartTaskInput }
+  | { operation: "plan_task_graph"; input: OrchestrationSurfaceTaskGraphPlanInput }
+  | { operation: "validate_task_graph_plan"; input: OrchestrationSurfaceValidateTaskGraphPlanInput }
   | { operation: "create_task_graph"; input: OrchestrationSurfaceCreateTaskGraphInput }
   | { operation: "get_task"; input: OrchestrationSurfaceTaskLookupInput }
   | { operation: "get_task_graph"; input: OrchestrationSurfaceTaskLookupInput }
@@ -187,6 +225,8 @@ export type OrchestrationSurfaceOperationRequest =
 
 export type OrchestrationSurfaceOperationResponse =
   | ({ operation: "start_task" } & OrchestrationSurfaceTaskResponse)
+  | ({ operation: "plan_task_graph" } & OrchestrationSurfaceTaskGraphPlanResponse)
+  | ({ operation: "validate_task_graph_plan" } & OrchestrationSurfaceTaskGraphPlanValidationResponse)
   | ({ operation: "create_task_graph" } & OrchestrationSurfaceTaskGraphResponse)
   | ({ operation: "get_task" } & OrchestrationSurfaceOptionalTaskResponse)
   | ({ operation: "get_task_graph" } & OrchestrationSurfaceOptionalTaskGraphResponse)
@@ -245,6 +285,10 @@ export class OrchestrationProductSurface {
     switch (request.operation) {
       case "start_task":
         return { operation: request.operation, ...(await this.startTask(request.input)) };
+      case "plan_task_graph":
+        return { operation: request.operation, ...(await this.planTaskGraph(request.input)) };
+      case "validate_task_graph_plan":
+        return { operation: request.operation, ...(await this.validateTaskGraphPlan(request.input)) };
       case "create_task_graph":
         return { operation: request.operation, ...(await this.createTaskGraph(request.input)) };
       case "get_task":
@@ -283,6 +327,25 @@ export class OrchestrationProductSurface {
       agent: selectorForRuntime(input.runtimeId),
     });
     return { task };
+  }
+
+  async planTaskGraph(
+    input: OrchestrationSurfaceTaskGraphPlanInput,
+  ): Promise<OrchestrationSurfaceTaskGraphPlanResponse> {
+    return {
+      plan: input,
+      validation: validateTaskDecompositionPlan(input),
+    };
+  }
+
+  async validateTaskGraphPlan(
+    input: OrchestrationSurfaceValidateTaskGraphPlanInput,
+  ): Promise<OrchestrationSurfaceTaskGraphPlanValidationResponse> {
+    const validation = validateTaskDecompositionPlan(input.plan);
+    return {
+      validation,
+      graphInput: validation.valid ? createGraphInputFromDecompositionPlan(input.plan) : undefined,
+    };
   }
 
   async createTaskGraph(

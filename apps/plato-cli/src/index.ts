@@ -6,11 +6,16 @@ import type {
   AgentRuntimeSelector,
   CreateOrchestrationGraphInput,
   OrchestrationEvent,
+  OrchestrationTaskDecompositionPlan,
   OrchestrationTaskGraphResultSnapshot,
   OrchestrationTaskGraphSnapshot,
   OrchestrationTaskRecord,
   OrchestrationTaskState,
   StartOrchestrationTaskInput,
+} from "@plato/orchestration";
+import {
+  createGraphInputFromDecompositionPlan,
+  validateTaskDecompositionPlan,
 } from "@plato/orchestration";
 
 export interface OrchestrationClient {
@@ -53,6 +58,34 @@ const promptSchema = z.string().min(1);
 
 const contextPackageSchema = z.any().optional();
 
+const documentationSourceSchema = z.object({
+  sourceId: z.string().min(1),
+  kind: z.enum(["context7", "url", "other"]),
+  label: z.string().min(1),
+  uri: z.string().min(1),
+  version: z.string().min(1).optional(),
+  checkedAt: z.string().min(1).optional(),
+  summary: z.string().min(1).optional(),
+});
+
+const documentationRequirementSchema = z.object({
+  requirementId: z.string().min(1),
+  label: z.string().min(1),
+  reason: z.string().min(1),
+  sources: z.array(documentationSourceSchema),
+  gaps: z.array(z.string().min(1)).optional(),
+});
+
+const writeScopeSchema = z.object({
+  paths: z.array(z.string().min(1)),
+  exclusive: z.boolean().optional(),
+});
+
+const verificationPlanSchema = z.object({
+  commands: z.array(z.string().min(1)),
+  acceptanceCriteria: z.array(z.string().min(1)),
+});
+
 const startTaskSchema = z.object({
   taskId: taskIdSchema,
   workspacePath: workspacePathSchema,
@@ -60,6 +93,10 @@ const startTaskSchema = z.object({
   priority: z.number().int().optional(),
   runtimeId: runtimeIdSchema,
   contextPackage: contextPackageSchema,
+});
+
+const planParentSchema = startTaskSchema.extend({
+  agent: z.object({ runtimeId: z.string().min(1) }).optional(),
 });
 
 const graphChildSchema = z.object({
@@ -71,9 +108,31 @@ const graphChildSchema = z.object({
   contextPackage: contextPackageSchema,
 });
 
+const plannedGraphChildSchema = graphChildSchema.extend({
+  objective: z.string().min(1),
+  writeScope: writeScopeSchema,
+  allowedToolNames: z.array(z.string().min(1)),
+  verification: verificationPlanSchema,
+  riskLevel: z.enum(["low", "medium", "high"]),
+  requiresApproval: z.boolean().optional(),
+  requiredDocumentation: z.array(documentationRequirementSchema).optional(),
+});
+
 const createGraphSchema = z.object({
   parent: startTaskSchema,
   children: z.array(graphChildSchema).min(1),
+});
+
+const taskGraphPlanSchema = z.object({
+  planId: z.string().min(1),
+  summary: z.string().min(1),
+  parent: planParentSchema,
+  children: z.array(plannedGraphChildSchema).min(1),
+  documentation: z.array(documentationRequirementSchema).optional(),
+});
+
+const validateTaskGraphPlanSchema = z.object({
+  plan: taskGraphPlanSchema,
 });
 
 const taskLookupSchema = z.object({
@@ -99,6 +158,21 @@ export function createPlatoMcpServer(client: OrchestrationClient): McpServer {
   registerTool(server, "plato.start_task", startTaskSchema, (input) =>
     client.startTask(startTaskInputFromSurfaceInput(input)),
   );
+  registerTool(server, "plato.plan_task_graph", taskGraphPlanSchema, (input) => {
+    const plan = taskGraphPlanFromSurfaceInput(input);
+    return {
+      plan,
+      validation: validateTaskDecompositionPlan(plan),
+    };
+  });
+  registerTool(server, "plato.validate_task_graph_plan", validateTaskGraphPlanSchema, (input) => {
+    const plan = taskGraphPlanFromSurfaceInput(input.plan);
+    const validation = validateTaskDecompositionPlan(plan);
+    return {
+      validation,
+      graphInput: validation.valid ? createGraphInputFromDecompositionPlan(plan) : undefined,
+    };
+  });
   registerTool(server, "plato.create_task_graph", createGraphSchema, (input) =>
     client.createTaskGraph(graphInputFromSurfaceInput(input)),
   );
@@ -251,6 +325,21 @@ async function runGraphCommand(
   const flags = parseFlags(argv);
   const selector = selectorFrom({ runtimeId: flags["runtime-id"] });
   switch (command) {
+    case "plan": {
+      const plan = parseTaskGraphPlan(requireFlag(flags, "plan-json"), selector);
+      return {
+        plan,
+        validation: validateTaskDecompositionPlan(plan),
+      };
+    }
+    case "validate": {
+      const plan = parseTaskGraphPlan(requireFlag(flags, "plan-json"), selector);
+      const validation = validateTaskDecompositionPlan(plan);
+      return {
+        validation,
+        graphInput: validation.valid ? createGraphInputFromDecompositionPlan(plan) : undefined,
+      };
+    }
     case "start":
       return client.createTaskGraph(parseGraphInput(flags, selector));
     case "status":
@@ -262,8 +351,24 @@ async function runGraphCommand(
         flags["task-id"],
       );
     default:
-      throw new Error("usage: plato graph start|status|results|synthesis");
+      throw new Error("usage: plato graph plan|validate|start|status|results|synthesis");
   }
+}
+
+function parseTaskGraphPlan(
+  raw: string,
+  selector?: AgentRuntimeSelector,
+): OrchestrationTaskDecompositionPlan {
+  const plan = taskGraphPlanFromSurfaceInput(taskGraphPlanSchema.parse(JSON.parse(raw) as unknown));
+  return selector
+    ? {
+        ...plan,
+        parent: {
+          ...plan.parent,
+          agent: selector,
+        },
+      }
+    : plan;
 }
 
 function parseGraphInput(
@@ -398,6 +503,19 @@ function graphInputFromSurfaceInput(input: z.infer<typeof createGraphSchema>): C
       agent: selectorFrom({ runtimeId }),
     },
     children: input.children,
+  };
+}
+
+function taskGraphPlanFromSurfaceInput(
+  input: z.infer<typeof taskGraphPlanSchema>,
+): OrchestrationTaskDecompositionPlan {
+  const { runtimeId, agent, ...parent } = input.parent;
+  return {
+    ...input,
+    parent: {
+      ...parent,
+      agent: selectorFrom({ runtimeId: runtimeId ?? agent?.runtimeId }),
+    },
   };
 }
 

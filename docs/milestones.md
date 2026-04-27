@@ -103,6 +103,14 @@ Current M27 scope:
 - first-run documentation for real Codex-backed local smoke testing with explicit temp storage
 - debugging guidance for missing auth, runtime, repo path, worktree, and event inspection issues
 
+Current M28 scope:
+
+- reviewable task decomposition plan contracts before graph execution
+- deterministic validation for worker context, boundaries, tools, dependencies, documentation evidence, and verification steps
+- Context7-first documentation evidence for framework, SDK, API, MCP, and tool behavior used by a plan
+- read-only CLI/MCP planning and validation operations before `create_task_graph`
+- testing, review, git branch, and PR gates for each decomposition milestone slice
+
 ## Milestone 5a: Agent-Agnostic Orchestration Boundary
 
 Goal: keep Plato's product-facing orchestration model independent from any one agent backend.

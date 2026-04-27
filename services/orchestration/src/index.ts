@@ -41,6 +41,68 @@ export interface CreateOrchestrationGraphInput {
   children: CreateOrchestrationGraphChildInput[];
 }
 
+export type OrchestrationPlanRiskLevel = "low" | "medium" | "high";
+
+export interface OrchestrationDocumentationSource {
+  sourceId: string;
+  kind: "context7" | "url" | "other";
+  label: string;
+  uri: string;
+  version?: string;
+  checkedAt?: string;
+  summary?: string;
+}
+
+export interface OrchestrationDocumentationRequirement {
+  requirementId: string;
+  label: string;
+  reason: string;
+  sources: OrchestrationDocumentationSource[];
+  gaps?: string[];
+}
+
+export interface OrchestrationTaskWriteScope {
+  paths: string[];
+  exclusive?: boolean;
+}
+
+export interface OrchestrationTaskVerificationPlan {
+  commands: string[];
+  acceptanceCriteria: string[];
+}
+
+export interface PlannedOrchestrationGraphChildInput extends CreateOrchestrationGraphChildInput {
+  objective: string;
+  writeScope: OrchestrationTaskWriteScope;
+  allowedToolNames: string[];
+  verification: OrchestrationTaskVerificationPlan;
+  riskLevel: OrchestrationPlanRiskLevel;
+  requiresApproval?: boolean;
+  requiredDocumentation?: OrchestrationDocumentationRequirement[];
+}
+
+export interface OrchestrationTaskDecompositionPlan {
+  planId: string;
+  summary: string;
+  parent: StartOrchestrationTaskInput;
+  children: PlannedOrchestrationGraphChildInput[];
+  documentation?: OrchestrationDocumentationRequirement[];
+}
+
+export type OrchestrationPlanValidationSeverity = "error" | "warning";
+
+export interface OrchestrationPlanValidationIssue {
+  severity: OrchestrationPlanValidationSeverity;
+  code: string;
+  message: string;
+  taskId?: string;
+}
+
+export interface OrchestrationPlanValidationResult {
+  valid: boolean;
+  issues: OrchestrationPlanValidationIssue[];
+}
+
 export interface OrchestrationTaskDecomposition {
   kind: "subtask";
   parentTaskId: string;
@@ -389,4 +451,5 @@ export class TaskOrchestrationService {
   }
 }
 
+export * from "./plan.js";
 export * from "./surface.js";
