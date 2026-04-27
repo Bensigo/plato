@@ -26,25 +26,30 @@ node dist/src/cli.js smoke
 The smoke command drives the real CLI handlers with a deterministic in-memory
 orchestration client. It verifies that a task can be started, inspected through
 status, listed, inspected through events, interrupted, and resumed without
-requiring Codex auth. It also starts a small task graph, inspects graph status,
-inspects graph results and synthesis, and checks graph lifecycle events.
+requiring Codex auth. It also runs the full delegate loop from a top-level task:
+decompose, validate, create the worker graph, inspect graph status, inspect
+graph results and synthesis, review the graph, and check graph lifecycle events.
 
 Successful output looks like:
 
 ```json
 {
   "taskId": "plato-smoke-task",
-  "graphTaskId": "plato-smoke-graph",
+  "graphTaskId": "plato-smoke-delegate",
   "workspacePath": "/path/to/plato",
   "checks": {
     "started": true,
     "statusReadable": true,
     "eventsReadable": true,
     "listed": true,
+    "delegated": true,
+    "delegateValidationReadable": true,
     "graphStarted": true,
     "graphStatusReadable": true,
     "graphResultsReadable": true,
+    "finalOutcomeReadable": true,
     "graphEventsReadable": true,
+    "reviewReadable": true,
     "interrupted": true,
     "resumed": true,
     "interruptResumeEventsReadable": true
@@ -55,6 +60,7 @@ Successful output looks like:
     "task.started",
     "task.completed",
     "task.graph.created",
+    "task.graph.result.collected",
     "task.graph.result.collected",
     "task.graph.result.collected",
     "task.graph.synthesized",
