@@ -89,6 +89,13 @@ Current M24 scope:
 - `@plato/cli` as the first CLI/MCP-facing app package
 - MCP tool/resource registration for the neutral product surface
 
+Current M26 scope:
+
+- stdio MCP server entrypoint through `plato mcp`
+- dedicated `plato-mcp` bin for agent configurations
+- runtime-backed MCP server connection using the same neutral orchestration bootstrap
+- smoke coverage for MCP tool discovery and tool calls over an MCP transport
+
 ## Milestone 5a: Agent-Agnostic Orchestration Boundary
 
 Goal: keep Plato's product-facing orchestration model independent from any one agent backend.
