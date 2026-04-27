@@ -101,6 +101,14 @@ Then build the CLI:
 pnpm --filter @plato/cli build
 ```
 
+Optionally configure the default model for real tasks. This is useful when your
+global Codex config points at a model that the installed Codex CLI cannot run:
+
+```sh
+plato config set-model gpt-5.4
+plato config status
+```
+
 Use explicit temporary storage so the smoke run does not mix with normal local
 state:
 
@@ -112,6 +120,7 @@ node apps/plato-cli/dist/src/cli.js task start \
   --task-id "$TASK_ID" \
   --workspace-path "$PWD" \
   --prompt "Inspect this repository and summarize the package layout." \
+  --model gpt-5.4 \
   --db-path "$SMOKE_DIR/runner.sqlite" \
   --log-path "$SMOKE_DIR/events.json"
 ```

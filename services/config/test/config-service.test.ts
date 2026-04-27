@@ -91,6 +91,42 @@ describe("PlatoConfigService", () => {
     await expect(service.setOpenAIApiKey("   ")).rejects.toThrow("OpenAI API key cannot be empty");
   });
 
+  it("configures and clears a default Codex model", async () => {
+    const tempDir = await createTempDir("plato-config-");
+    const service = createFileBackedPlatoConfigService({
+      configPath: `${tempDir}/config.json`,
+      secretsPath: `${tempDir}/secrets.json`,
+    });
+
+    await expect(service.setCodexModel(" gpt-5.4 ")).resolves.toMatchObject({
+      configPath: `${tempDir}/config.json`,
+      codexModel: "gpt-5.4",
+      codexAuth: {
+        configured: false,
+      },
+    });
+    await expect(service.resolveCodexModel()).resolves.toBe("gpt-5.4");
+    await expect(readFile(`${tempDir}/config.json`, "utf8")).resolves.toContain("\"codexModel\": \"gpt-5.4\"");
+
+    await expect(service.clearCodexModel()).resolves.toEqual({
+      configPath: `${tempDir}/config.json`,
+      codexAuth: {
+        configured: false,
+      },
+    });
+    await expect(service.resolveCodexModel()).resolves.toBeUndefined();
+  });
+
+  it("rejects empty Codex models", async () => {
+    const tempDir = await createTempDir("plato-config-");
+    const service = createFileBackedPlatoConfigService({
+      configPath: `${tempDir}/config.json`,
+      secretsPath: `${tempDir}/secrets.json`,
+    });
+
+    await expect(service.setCodexModel("   ")).rejects.toThrow("Codex model cannot be empty");
+  });
+
   it("records ChatGPT OAuth as Codex-managed account metadata without secrets", async () => {
     const tempDir = await createTempDir("plato-config-");
     const service = createFileBackedPlatoConfigService({

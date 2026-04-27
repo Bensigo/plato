@@ -26,6 +26,14 @@ export async function runPlato(argv: string[], options: RunPlatoOptions = {}): P
     (options.stdout ?? process.stdout).write(`${buildCommandHelpText(command)}\n`);
     return 0;
   }
+  if (command === "config") {
+    const { runCodexRunnerCli } = await import("@plato/codex-runner");
+    return runCodexRunnerCli(["config", ...rest], {
+      cwd: process.cwd(),
+      stdout: options.stdout,
+      stderr: options.stderr,
+    });
+  }
   if (command === "mcp") {
     const parsed = parseRuntimeOptions(rest);
     if (parsed.error) {
@@ -81,6 +89,9 @@ function buildPlatoHelpText(): string {
     "  plato task events --task-id <id>",
     "      Read captured session output and lifecycle events.",
     "",
+    "  plato config set-model gpt-5.4",
+    "      Set the default Codex model used by real tasks.",
+    "",
     "  plato delegate start --task-id <id> --workspace-path \"$PWD\" --prompt \"Ship the feature\"",
     "      Decompose a top-level task, validate the plan, and start the worker graph.",
     "",
@@ -90,6 +101,7 @@ function buildPlatoHelpText(): string {
     "  graph      Validate, start, inspect, and read graph results or synthesis.",
     "  review     Review plans, graph readiness, worker status, and approvals.",
     "  tool       List available worker tool harnesses.",
+    "  config     Configure Codex auth and the default model.",
     "  mcp        Run the Plato MCP server over stdio.",
     "  smoke      Run the deterministic local MVP smoke.",
     "",
@@ -106,6 +118,7 @@ function buildPlatoHelpText(): string {
     "  plato delegate --help",
     "  plato graph --help",
     "  plato review --help",
+    "  plato config --help",
     "  plato mcp --help",
   ].join("\n");
 }
@@ -162,6 +175,22 @@ function buildCommandHelpText(command: string): string {
         "  plato tool catalog",
         "",
         "Lists worker tool harnesses, risk levels, approval requirements, and failure modes.",
+      ].join("\n");
+    case "config":
+      return [
+        "Usage:",
+        "  plato config status",
+        "  plato config set-model <model>",
+        "  plato config clear-model",
+        "  plato config auth-chatgpt [--device-code]",
+        "  plato config set-openai-key (--api-key-stdin | --api-key-env <name> | --api-key <key>)",
+        "  plato config clear-openai-key",
+        "",
+        "Examples:",
+        "  plato config set-model gpt-5.4",
+        "  plato config status",
+        "",
+        "Per-run overrides still work with --model <name> on task, delegate, graph, and mcp commands.",
       ].join("\n");
     case "mcp":
       return [

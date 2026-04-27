@@ -10,6 +10,7 @@ export interface PlatoConfigRecord {
     openAIApiKeySecretRef?: string;
     chatGptOAuth?: ChatGptOAuthConfig;
   };
+  codexModel?: string;
 }
 
 export interface ChatGptOAuthConfig {
@@ -47,6 +48,7 @@ export interface CodexAuthStatus {
 export interface PlatoConfigStatus {
   configPath: string;
   codexAuth: CodexAuthStatus;
+  codexModel?: string;
 }
 
 export interface ResolvedCodexAuth {
@@ -87,6 +89,7 @@ export class PlatoConfigService {
     if (!auth) {
       return {
         configPath: this.#configStore.path,
+        ...(config.codexModel ? { codexModel: config.codexModel } : {}),
         codexAuth: {
           configured: false,
         },
@@ -97,6 +100,7 @@ export class PlatoConfigService {
       const key = await this.#secretStore.get(auth.openAIApiKeySecretRef);
       return {
         configPath: this.#configStore.path,
+        ...(config.codexModel ? { codexModel: config.codexModel } : {}),
         codexAuth: {
           configured: key !== undefined,
           provider: "openai_api_key",
@@ -111,6 +115,7 @@ export class PlatoConfigService {
     if (auth.provider === "chatgpt_oauth") {
       return {
         configPath: this.#configStore.path,
+        ...(config.codexModel ? { codexModel: config.codexModel } : {}),
         codexAuth: {
           configured: Boolean(auth.chatGptOAuth?.accountId),
           provider: "chatgpt_oauth",
@@ -128,6 +133,7 @@ export class PlatoConfigService {
 
     return {
       configPath: this.#configStore.path,
+      ...(config.codexModel ? { codexModel: config.codexModel } : {}),
       codexAuth: {
         configured: false,
         provider: auth.provider,
@@ -152,6 +158,33 @@ export class PlatoConfigService {
     });
 
     return this.getStatus();
+  }
+
+  async setCodexModel(model: string): Promise<PlatoConfigStatus> {
+    const trimmed = model.trim();
+    if (!trimmed) {
+      throw new Error("Codex model cannot be empty");
+    }
+
+    await this.#configStore.write({
+      ...(await this.#configStore.read()),
+      codexModel: trimmed,
+    });
+
+    return this.getStatus();
+  }
+
+  async clearCodexModel(): Promise<PlatoConfigStatus> {
+    await this.#configStore.write({
+      ...(await this.#configStore.read()),
+      codexModel: undefined,
+    });
+
+    return this.getStatus();
+  }
+
+  async resolveCodexModel(): Promise<string | undefined> {
+    return (await this.#configStore.read()).codexModel;
   }
 
   async setChatGptOAuthAccount(input: SetChatGptOAuthAccountInput = {}): Promise<PlatoConfigStatus> {

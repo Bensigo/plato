@@ -154,10 +154,16 @@ async function handleConfig(
       return handleConfigSetOpenAIKey(rest, options);
     case "clear-openai-key":
       return handleConfigClearOpenAIKey(rest, options);
+    case "set-model":
+      return handleConfigSetModel(rest, options);
+    case "clear-model":
+      return handleConfigClearModel(rest, options);
     case "auth-chatgpt":
       return handleConfigAuthChatGpt(rest, options);
     default:
-      throw new Error("config requires a subcommand: status, set-openai-key, clear-openai-key, or auth-chatgpt");
+      throw new Error(
+        "config requires a subcommand: status, set-openai-key, clear-openai-key, set-model, clear-model, or auth-chatgpt",
+      );
   }
 }
 
@@ -252,6 +258,39 @@ async function handleConfigClearOpenAIKey(
 ): Promise<number> {
   const service = openConfigService(argv, options.cwd);
   writeJson(options.stdout ?? process.stdout, await service.clearCodexAuth());
+  return 0;
+}
+
+async function handleConfigSetModel(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout">,
+): Promise<number> {
+  const parsed = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      "config-path": { type: "string" },
+      "secrets-path": { type: "string" },
+    },
+  });
+  const [model] = parsed.positionals;
+  if (!model) {
+    throw new Error("config set-model requires a model name");
+  }
+  const service = createFileBackedPlatoConfigService({
+    configPath: resolveOptionalPath(options.cwd, parsed.values["config-path"]),
+    secretsPath: resolveOptionalPath(options.cwd, parsed.values["secrets-path"]),
+  });
+  writeJson(options.stdout ?? process.stdout, await service.setCodexModel(model));
+  return 0;
+}
+
+async function handleConfigClearModel(
+  argv: string[],
+  options: Pick<RunCodexRunnerCliOptions, "cwd" | "stdout">,
+): Promise<number> {
+  const service = openConfigService(argv, options.cwd);
+  writeJson(options.stdout ?? process.stdout, await service.clearCodexModel());
   return 0;
 }
 
@@ -439,6 +478,7 @@ async function loadGraphResults(
 export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}): Promise<OperatorRuntime> {
   const storagePaths = resolveStoragePaths(options.cwd ?? process.cwd(), options.dbPath, options.logPath);
   const persistence = openCodexRunnerPersistence({ filePath: storagePaths.dbPath });
+  const configuredModel = options.model ?? await resolveCodexModelFromConfig(options);
   const service = new CodexRunnerService({
     store: persistence.store,
     sessionStore: persistence.sessionStore,
@@ -446,7 +486,7 @@ export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}):
     logStreamer: new FileLogStreamer(storagePaths.logPath),
     agentSessionFactory: new CodexSdkBackedAgentSessionFactory({
       codexOptions: await resolveCodexOptionsFromConfig(options),
-      threadOptions: options.model ? { model: options.model } : undefined,
+      threadOptions: configuredModel ? { model: configuredModel } : undefined,
     }),
     runtimeManager: new DefaultCodexRuntimeManager(),
     maxConcurrentTasks: options.maxConcurrentTasks,
@@ -459,6 +499,15 @@ export async function openOperatorRuntime(options: OperatorRuntimeOptions = {}):
       persistence.close();
     },
   };
+}
+
+export async function resolveCodexModelFromConfig(
+  options: Pick<OperatorRuntimeOptions, "configPath" | "secretsPath" | "cwd"> = {},
+): Promise<string | undefined> {
+  return createFileBackedPlatoConfigService({
+    configPath: resolveOptionalPath(options.cwd, options.configPath),
+    secretsPath: resolveOptionalPath(options.cwd, options.secretsPath),
+  }).resolveCodexModel();
 }
 
 export async function resolveCodexOptionsFromConfig(
@@ -895,6 +944,8 @@ function buildHelpText(): string {
     "  config status",
     "  config set-openai-key (--api-key-stdin | --api-key-env <name> | --api-key <key>)",
     "  config clear-openai-key",
+    "  config set-model <model>",
+    "  config clear-model",
     "  config auth-chatgpt [--device-code] [--codex-path <path>]",
     "",
     "Storage:",
@@ -902,6 +953,7 @@ function buildHelpText(): string {
     "  --log-path <path>  Defaults to the events.json file next to the database",
     "  --config-path <path>   Defaults to ~/.plato/config.json for auth config",
     "  --secrets-path <path>  Defaults to ~/.plato/secrets.json for auth secrets",
+    "  --model <name>         Overrides the configured Codex model for this run",
   ].join("\n");
 }
 
