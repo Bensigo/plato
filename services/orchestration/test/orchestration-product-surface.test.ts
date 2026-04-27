@@ -359,6 +359,93 @@ describe("OrchestrationProductSurface", () => {
     expect(runtime.createdGraphParentIds).toEqual([]);
   });
 
+  it("plans a validated read-only decomposition from a top-level task brief", async () => {
+    const runtime = new SurfaceFakeRuntime("default-agent", "test-agent");
+    const surface = new OrchestrationProductSurface(
+      new TaskOrchestrationService({
+        defaultRuntimeId: runtime.runtimeId,
+        runtimes: [runtime],
+      }),
+    );
+
+    const response = await surface.planTaskGraph({
+      taskId: "m28-orchestration-planner",
+      workspacePath: "/repo",
+      prompt: "Implement the orchestration-domain planner/preflight slice for M28.",
+      milestoneId: "M28",
+      writeScopePaths: [
+        "services/orchestration/src/index.ts",
+        "services/orchestration/src/plan.ts",
+        "services/orchestration/src/surface.ts",
+        "services/orchestration/test/orchestration-product-surface.test.ts",
+        "services/orchestration/README.md",
+      ],
+      verificationCommands: [
+        "pnpm --filter @plato/orchestration test",
+        "pnpm --filter @plato/orchestration typecheck",
+      ],
+    });
+
+    expect(response.validation).toEqual({ valid: true, issues: [] });
+    expect(response.plan).toMatchObject({
+      planId: "m28-orchestration-planner-decomposition-plan",
+      parent: {
+        taskId: "m28-orchestration-planner",
+        workspacePath: "/repo",
+      },
+      documentation: [
+        expect.objectContaining({
+          requirementId: "context7-preflight",
+          gaps: expect.arrayContaining([
+            expect.stringContaining("Resolve Context7 docs during preflight"),
+          ]),
+        }),
+      ],
+      children: [
+        expect.objectContaining({
+          taskId: "m28-orchestration-planner-preflight",
+          allowedToolNames: expect.arrayContaining(["inspect_workspace", "read_contract", "list_tests"]),
+          riskLevel: "low",
+          contextPackage: expect.objectContaining({
+            summary: expect.stringContaining("Context7 requirement"),
+          }),
+        }),
+        expect.objectContaining({
+          taskId: "m28-orchestration-planner-implementation",
+          dependencyTaskIds: ["m28-orchestration-planner-preflight"],
+          allowedToolNames: expect.arrayContaining([
+            "context7.resolve_library",
+            "context7.get_docs",
+            "apply_patch",
+            "run_tests",
+            "run_typecheck",
+          ]),
+          writeScope: {
+            exclusive: true,
+            paths: expect.arrayContaining(["services/orchestration/src/plan.ts"]),
+          },
+        }),
+        expect.objectContaining({
+          taskId: "m28-orchestration-planner-review",
+          dependencyTaskIds: ["m28-orchestration-planner-implementation"],
+          allowedToolNames: expect.arrayContaining(["request_review", "git.push", "github.open_pr"]),
+          requiresApproval: true,
+          riskLevel: "high",
+          verification: expect.objectContaining({
+            acceptanceCriteria: expect.arrayContaining([
+              "Milestone branch is pushed and a pull request is opened for review.",
+            ]),
+          }),
+        }),
+      ],
+    });
+    expect(response.plan.children.map((child) => child.prompt).join("\n")).toContain(
+      "Review and PR steps",
+    );
+    expect(runtime.startedTaskIds).toEqual([]);
+    expect(runtime.createdGraphParentIds).toEqual([]);
+  });
+
   it("validates decomposition quality before graph execution", () => {
     const plan = buildPlan({
       children: [

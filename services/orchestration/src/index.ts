@@ -102,6 +102,16 @@ export interface OrchestrationTaskDecompositionPlan {
   documentation?: OrchestrationDocumentationRequirement[];
 }
 
+export interface OrchestrationTaskPlanningInput extends StartOrchestrationTaskInput {
+  planId?: string;
+  summary?: string;
+  milestoneId?: string;
+  writeScopePaths?: string[];
+  documentation?: OrchestrationDocumentationRequirement[];
+  verificationCommands?: string[];
+  acceptanceCriteria?: string[];
+}
+
 export type OrchestrationPlanValidationSeverity = "error" | "warning";
 
 export interface OrchestrationPlanValidationIssue {

@@ -7,6 +7,7 @@ import type {
   OrchestrationGraphState,
   OrchestrationResultClassification,
   OrchestrationTaskDecompositionPlan,
+  OrchestrationTaskPlanningInput,
   OrchestrationTaskGraphResultSnapshot,
   OrchestrationTaskGraphSnapshot,
   OrchestrationTaskRecord,
@@ -17,6 +18,7 @@ import type {
 } from "./index.js";
 import {
   DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG,
+  createTaskDecompositionPlan,
   createGraphInputFromDecompositionPlan,
   validateTaskDecompositionPlan,
 } from "./plan.js";
@@ -153,7 +155,9 @@ export interface OrchestrationSurfaceCreateTaskGraphInput {
   children: OrchestrationSurfaceCreateTaskGraphChildInput[];
 }
 
-export type OrchestrationSurfaceTaskGraphPlanInput = OrchestrationTaskDecompositionPlan;
+export type OrchestrationSurfaceTaskGraphPlanInput =
+  | OrchestrationTaskPlanningInput
+  | OrchestrationTaskDecompositionPlan;
 
 export interface OrchestrationSurfaceValidateTaskGraphPlanInput {
   plan: OrchestrationTaskDecompositionPlan;
@@ -360,9 +364,12 @@ export class OrchestrationProductSurface {
   async planTaskGraph(
     input: OrchestrationSurfaceTaskGraphPlanInput,
   ): Promise<OrchestrationSurfaceTaskGraphPlanResponse> {
+    const plan = isTaskDecompositionPlan(input)
+      ? input
+      : createTaskDecompositionPlan(input, { toolCatalog: this.#toolCatalog });
     return {
-      plan: input,
-      validation: validateTaskDecompositionPlan(input, { toolCatalog: this.#toolCatalog }),
+      plan,
+      validation: validateTaskDecompositionPlan(plan, { toolCatalog: this.#toolCatalog }),
     };
   }
 
@@ -488,4 +495,10 @@ function copyToolDescriptor(tool: OrchestrationToolHarnessDescriptor): Orchestra
     ...tool,
     failureModes: [...tool.failureModes],
   };
+}
+
+function isTaskDecompositionPlan(
+  input: OrchestrationSurfaceTaskGraphPlanInput,
+): input is OrchestrationTaskDecompositionPlan {
+  return "planId" in input && "children" in input && Array.isArray(input.children);
 }
