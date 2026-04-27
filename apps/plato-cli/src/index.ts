@@ -6,14 +6,18 @@ import type {
   AgentRuntimeSelector,
   CreateOrchestrationGraphInput,
   OrchestrationEvent,
+  OrchestrationSurfaceToolDescriptor,
   OrchestrationTaskDecompositionPlan,
   OrchestrationTaskGraphResultSnapshot,
   OrchestrationTaskGraphSnapshot,
   OrchestrationTaskRecord,
   OrchestrationTaskState,
+  OrchestrationToolHarnessDescriptor,
   StartOrchestrationTaskInput,
 } from "@plato/orchestration";
 import {
+  DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG,
+  ORCHESTRATION_SURFACE_TOOLS,
   createGraphInputFromDecompositionPlan,
   validateTaskDecompositionPlan,
 } from "@plato/orchestration";
@@ -149,6 +153,28 @@ const rejectSchema = taskLookupSchema.extend({
   reason: z.string().min(1),
 });
 
+type PlatoToolDescriptor =
+  | OrchestrationSurfaceToolDescriptor
+  | {
+      name: "plato.list_tools";
+      operation: "list_tools";
+      description: string;
+      readOnly: true;
+    };
+
+const PLATO_TOOL_CATALOG: readonly PlatoToolDescriptor[] = [
+  ...ORCHESTRATION_SURFACE_TOOLS,
+  {
+    name: "plato.list_tools",
+    operation: "list_tools",
+    description: "List Plato MCP tool descriptors.",
+    readOnly: true,
+  },
+];
+
+const PLATO_ORCHESTRATION_TOOL_CATALOG: readonly OrchestrationToolHarnessDescriptor[] =
+  DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG;
+
 export function createPlatoMcpServer(client: OrchestrationClient): McpServer {
   const server = new McpServer({
     name: "plato",
@@ -204,6 +230,8 @@ export function createPlatoMcpServer(client: OrchestrationClient): McpServer {
   registerTool(server, "plato.reject_task_action", rejectSchema, (input) =>
     client.rejectTaskAction(input.taskId, input.reason, selectorFrom(input)),
   );
+  registerTool(server, "plato.list_tools", z.object({}), () => listToolCatalog());
+  registerTool(server, "plato.list_orchestration_tools", z.object({}), () => listOrchestrationToolCatalog());
 
   server.registerResource(
     "tasks",
@@ -278,7 +306,10 @@ async function runCommand(argv: string[], client: OrchestrationClient): Promise<
   if (domain === "graph") {
     return runGraphCommand(command, rest, client);
   }
-  throw new Error("usage: plato task|graph <command>");
+  if (domain === "tool") {
+    return runToolCommand(command, rest);
+  }
+  throw new Error("usage: plato task|graph|tool <command>");
 }
 
 async function runTaskCommand(
@@ -355,6 +386,29 @@ async function runGraphCommand(
   }
 }
 
+async function runToolCommand(command: string | undefined, argv: string[]): Promise<unknown> {
+  if (argv.length > 0) {
+    throw new Error("usage: plato tool catalog");
+  }
+  switch (command) {
+    case "catalog":
+      return listOrchestrationToolCatalog();
+    default:
+      throw new Error("usage: plato tool catalog");
+  }
+}
+
+function listToolCatalog(): PlatoToolDescriptor[] {
+  return PLATO_TOOL_CATALOG.map((tool) => ({ ...tool }));
+}
+
+function listOrchestrationToolCatalog(): OrchestrationToolHarnessDescriptor[] {
+  return PLATO_ORCHESTRATION_TOOL_CATALOG.map((tool) => ({
+    ...tool,
+    failureModes: [...tool.failureModes],
+  }));
+}
+
 function parseTaskGraphPlan(
   raw: string,
   selector?: AgentRuntimeSelector,
@@ -395,14 +449,21 @@ function registerTool<T extends z.ZodType>(
   schema: T,
   handler: (input: z.infer<T>) => Promise<unknown> | unknown,
 ): void {
+  const descriptor = PLATO_TOOL_CATALOG.find((tool) => tool.name === name);
   (server.registerTool as unknown as (
     toolName: string,
-    config: { inputSchema: T },
+    config: {
+      description?: string;
+      inputSchema: T;
+      annotations?: { readOnlyHint: boolean };
+    },
     cb: (input: z.infer<T>) => Promise<CallToolResult>,
   ) => void)(
     name,
     {
+      description: descriptor?.description,
       inputSchema: schema,
+      annotations: descriptor ? { readOnlyHint: descriptor.readOnly } : undefined,
     },
     async (input) => toolResult(await handler(input as z.infer<T>)),
   );

@@ -11,9 +11,12 @@ import type {
   OrchestrationTaskGraphSnapshot,
   OrchestrationTaskRecord,
   OrchestrationTaskState,
+  OrchestrationToolHarnessCatalog,
+  OrchestrationToolHarnessDescriptor,
   StartOrchestrationTaskInput,
 } from "./index.js";
 import {
+  DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG,
   createGraphInputFromDecompositionPlan,
   validateTaskDecompositionPlan,
 } from "./plan.js";
@@ -22,6 +25,7 @@ export const ORCHESTRATION_SURFACE_OPERATION_NAMES = [
   "start_task",
   "plan_task_graph",
   "validate_task_graph_plan",
+  "list_orchestration_tools",
   "create_task_graph",
   "get_task",
   "get_task_graph",
@@ -61,6 +65,12 @@ export const ORCHESTRATION_SURFACE_TOOLS: readonly OrchestrationSurfaceToolDescr
     name: "plato.validate_task_graph_plan",
     operation: "validate_task_graph_plan",
     description: "Validate a task graph plan before execution.",
+    readOnly: true,
+  },
+  {
+    name: "plato.list_orchestration_tools",
+    operation: "list_orchestration_tools",
+    description: "List worker tool harness descriptors that task plans may allow.",
     readOnly: true,
   },
   {
@@ -186,6 +196,10 @@ export interface OrchestrationSurfaceTaskGraphPlanValidationResponse {
   graphInput?: CreateOrchestrationGraphInput;
 }
 
+export interface OrchestrationSurfaceToolHarnessCatalogResponse {
+  tools: OrchestrationToolHarnessDescriptor[];
+}
+
 export interface OrchestrationSurfaceOptionalTaskGraphResponse {
   graph?: OrchestrationTaskGraphSnapshot;
 }
@@ -212,6 +226,7 @@ export type OrchestrationSurfaceOperationRequest =
   | { operation: "start_task"; input: OrchestrationSurfaceStartTaskInput }
   | { operation: "plan_task_graph"; input: OrchestrationSurfaceTaskGraphPlanInput }
   | { operation: "validate_task_graph_plan"; input: OrchestrationSurfaceValidateTaskGraphPlanInput }
+  | { operation: "list_orchestration_tools"; input?: Record<string, never> }
   | { operation: "create_task_graph"; input: OrchestrationSurfaceCreateTaskGraphInput }
   | { operation: "get_task"; input: OrchestrationSurfaceTaskLookupInput }
   | { operation: "get_task_graph"; input: OrchestrationSurfaceTaskLookupInput }
@@ -227,6 +242,7 @@ export type OrchestrationSurfaceOperationResponse =
   | ({ operation: "start_task" } & OrchestrationSurfaceTaskResponse)
   | ({ operation: "plan_task_graph" } & OrchestrationSurfaceTaskGraphPlanResponse)
   | ({ operation: "validate_task_graph_plan" } & OrchestrationSurfaceTaskGraphPlanValidationResponse)
+  | ({ operation: "list_orchestration_tools" } & OrchestrationSurfaceToolHarnessCatalogResponse)
   | ({ operation: "create_task_graph" } & OrchestrationSurfaceTaskGraphResponse)
   | ({ operation: "get_task" } & OrchestrationSurfaceOptionalTaskResponse)
   | ({ operation: "get_task_graph" } & OrchestrationSurfaceOptionalTaskGraphResponse)
@@ -268,15 +284,25 @@ export interface OrchestrationSurfaceService {
   ): Promise<OrchestrationTaskRecord>;
 }
 
+export interface OrchestrationProductSurfaceOptions {
+  toolCatalog?: OrchestrationToolHarnessCatalog;
+}
+
 export class OrchestrationProductSurface {
   readonly #service: OrchestrationSurfaceService;
+  readonly #toolCatalog?: OrchestrationToolHarnessCatalog;
 
-  constructor(service: OrchestrationSurfaceService) {
+  constructor(service: OrchestrationSurfaceService, options: OrchestrationProductSurfaceOptions = {}) {
     this.#service = service;
+    this.#toolCatalog = options.toolCatalog;
   }
 
   listTools(): OrchestrationSurfaceToolDescriptor[] {
     return ORCHESTRATION_SURFACE_TOOLS.map((tool) => ({ ...tool }));
+  }
+
+  listToolCatalog(): OrchestrationToolHarnessDescriptor[] {
+    return (this.#toolCatalog ?? DEFAULT_ORCHESTRATION_TOOL_HARNESS_CATALOG).map(copyToolDescriptor);
   }
 
   async execute(
@@ -289,6 +315,8 @@ export class OrchestrationProductSurface {
         return { operation: request.operation, ...(await this.planTaskGraph(request.input)) };
       case "validate_task_graph_plan":
         return { operation: request.operation, ...(await this.validateTaskGraphPlan(request.input)) };
+      case "list_orchestration_tools":
+        return { operation: request.operation, tools: this.listToolCatalog() };
       case "create_task_graph":
         return { operation: request.operation, ...(await this.createTaskGraph(request.input)) };
       case "get_task":
@@ -334,14 +362,14 @@ export class OrchestrationProductSurface {
   ): Promise<OrchestrationSurfaceTaskGraphPlanResponse> {
     return {
       plan: input,
-      validation: validateTaskDecompositionPlan(input),
+      validation: validateTaskDecompositionPlan(input, { toolCatalog: this.#toolCatalog }),
     };
   }
 
   async validateTaskGraphPlan(
     input: OrchestrationSurfaceValidateTaskGraphPlanInput,
   ): Promise<OrchestrationSurfaceTaskGraphPlanValidationResponse> {
-    const validation = validateTaskDecompositionPlan(input.plan);
+    const validation = validateTaskDecompositionPlan(input.plan, { toolCatalog: this.#toolCatalog });
     return {
       validation,
       graphInput: validation.valid ? createGraphInputFromDecompositionPlan(input.plan) : undefined,
@@ -441,8 +469,9 @@ export class OrchestrationProductSurface {
 
 export function createOrchestrationProductSurface(
   service: OrchestrationSurfaceService,
+  options?: OrchestrationProductSurfaceOptions,
 ): OrchestrationProductSurface {
-  return new OrchestrationProductSurface(service);
+  return new OrchestrationProductSurface(service, options);
 }
 
 export function selectorForRuntime(runtimeId?: string): AgentRuntimeSelector | undefined {
@@ -453,3 +482,10 @@ export type OrchestrationSurfaceSnapshotState =
   | OrchestrationTaskState
   | OrchestrationGraphState
   | OrchestrationResultClassification;
+
+function copyToolDescriptor(tool: OrchestrationToolHarnessDescriptor): OrchestrationToolHarnessDescriptor {
+  return {
+    ...tool,
+    failureModes: [...tool.failureModes],
+  };
+}

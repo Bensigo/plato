@@ -15,6 +15,9 @@ work to Codex today and other agents later without changing upstream callers.
   concrete runner implementation.
 - `OrchestrationProductSurface` defines stable `plato.*` operation descriptors
   and JSON-friendly envelopes that CLI/MCP adapters can expose.
+- Worker tool harnesses can provide a neutral `OrchestrationToolHarnessCatalog`;
+  plan validation rejects planned `allowedToolNames` that are not in the
+  supplied catalog.
 
 ## Runtime Registration
 

@@ -34,6 +34,12 @@ The smoke command exercises task start, status, list, and events through the
 real CLI handlers using an in-memory fake runtime. For the real Codex-backed
 manual smoke path, see [docs/local-task-smoke.md](/Users/macbook/work/plato/docs/local-task-smoke.md).
 
+The read-only worker tool harness catalog is available without opening a runtime:
+
+```sh
+plato tool catalog
+```
+
 Both MCP entrypoints use stdio transport. Do not write normal logs to stdout in
 this process; stdout is reserved for MCP JSON-RPC messages.
 
@@ -69,6 +75,8 @@ Example local agent configuration:
 - `plato.resume_task`
 - `plato.approve_task_action`
 - `plato.reject_task_action`
+- `plato.list_tools`
+- `plato.list_orchestration_tools`
 
 ## Resource Catalog
 

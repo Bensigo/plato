@@ -11,6 +11,7 @@ import {
   type OrchestrationTaskGraphResultSnapshot,
   type OrchestrationTaskGraphSnapshot,
   type OrchestrationTaskRecord,
+  type OrchestrationToolHarnessCatalog,
   type StartOrchestrationTaskInput,
 } from "../src/index.js";
 
@@ -46,6 +47,11 @@ describe("OrchestrationProductSurface", () => {
           readOnly: true,
         }),
         expect.objectContaining({
+          name: "plato.list_orchestration_tools",
+          operation: "list_orchestration_tools",
+          readOnly: true,
+        }),
+        expect.objectContaining({
           name: "plato.reject_task_action",
           operation: "reject_task_action",
           readOnly: false,
@@ -53,6 +59,55 @@ describe("OrchestrationProductSurface", () => {
       ]),
     );
     expect(surface.listTools().map((tool) => tool.name)).not.toContain("codex.start_task");
+  });
+
+  it("exposes neutral worker tool harness descriptors", () => {
+    const surface = new OrchestrationProductSurface(
+      new TaskOrchestrationService({
+        defaultRuntimeId: "test",
+        runtimes: [new SurfaceFakeRuntime("test", "test-agent")],
+      }),
+      {
+        toolCatalog: [
+          {
+            name: "search_repo",
+            title: "Search Repo",
+            description: "Search repository text and filenames.",
+            mode: "read",
+            riskLevel: "low",
+            failureModes: ["search_failed"],
+          },
+          {
+            name: "apply_patch",
+            title: "Apply Patch",
+            description: "Apply a scoped source patch.",
+            mode: "write",
+            riskLevel: "medium",
+            failureModes: ["patch_failed"],
+          },
+        ],
+      },
+    );
+
+    expect(surface.listToolCatalog()).toEqual([
+      {
+        name: "search_repo",
+        title: "Search Repo",
+        description: "Search repository text and filenames.",
+        mode: "read",
+        riskLevel: "low",
+        failureModes: ["search_failed"],
+      },
+      {
+        name: "apply_patch",
+        title: "Apply Patch",
+        description: "Apply a scoped source patch.",
+        mode: "write",
+        riskLevel: "medium",
+        failureModes: ["patch_failed"],
+      },
+    ]);
+    expect(surface.listToolCatalog().map((tool) => tool.name)).not.toContain("codex.apply_patch");
   });
 
   it("starts tasks and graphs through runtime selectors using product-level workspace paths", async () => {
@@ -245,6 +300,20 @@ describe("OrchestrationProductSurface", () => {
         }),
       ],
     });
+    await expect(
+      surface.execute({
+        operation: "list_orchestration_tools",
+      }),
+    ).resolves.toMatchObject({
+      operation: "list_orchestration_tools",
+      tools: expect.arrayContaining([
+        expect.objectContaining({
+          name: "context7.get_docs",
+          mode: "external",
+          riskLevel: "low",
+        }),
+      ]),
+    });
   });
 
   it("returns and validates reviewable task graph plans without starting execution", async () => {
@@ -345,6 +414,152 @@ describe("OrchestrationProductSurface", () => {
           severity: "warning",
           code: "CONTEXT7_SOURCE_RECOMMENDED",
           taskId: "child-b",
+        }),
+      ]),
+    });
+  });
+
+  it("validates planned worker allowed tools against a supplied catalog", async () => {
+    const runtime = new SurfaceFakeRuntime("default-agent", "test-agent");
+    const surface = new OrchestrationProductSurface(
+      new TaskOrchestrationService({
+        defaultRuntimeId: runtime.runtimeId,
+        runtimes: [runtime],
+      }),
+      {
+        toolCatalog: [
+          {
+            name: "search_repo",
+            title: "Search Repo",
+            description: "Search repository text and filenames.",
+            mode: "read",
+            riskLevel: "low",
+            failureModes: ["search_failed"],
+          },
+          {
+            name: "read_file",
+            title: "Read File",
+            description: "Read repository files.",
+            mode: "read",
+            riskLevel: "low",
+            failureModes: ["read_failed"],
+          },
+        ],
+      },
+    );
+    const plan = buildPlan({
+      children: [
+        {
+          ...buildPlan().children[0],
+          allowedToolNames: ["search_repo", "run_tests"],
+        },
+      ],
+    });
+
+    await expect(surface.validateTaskGraphPlan({ plan })).resolves.toMatchObject({
+      validation: {
+        valid: false,
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            code: "UNKNOWN_ALLOWED_TOOL",
+            taskId: "child-a",
+          }),
+        ]),
+      },
+      graphInput: undefined,
+    });
+    expect(validateTaskDecompositionPlan(plan, { toolCatalog: surface.listToolCatalog() })).toMatchObject({
+      valid: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "UNKNOWN_ALLOWED_TOOL",
+          message: "Child task child-a allows unknown tool run_tests",
+          taskId: "child-a",
+        }),
+      ]),
+    });
+  });
+
+  it("requires approval for approval-gated worker tools", () => {
+    const plan = buildPlan({
+      children: [
+        {
+          ...buildPlan().children[0],
+          allowedToolNames: ["git.push"],
+          riskLevel: "medium",
+        },
+      ],
+    });
+
+    expect(validateTaskDecompositionPlan(plan)).toMatchObject({
+      valid: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "TOOL_APPROVAL_REQUIRED",
+          taskId: "child-a",
+          toolName: "git.push",
+        }),
+        expect.objectContaining({
+          severity: "warning",
+          code: "TOOL_RISK_EXCEEDS_TASK_RISK",
+          taskId: "child-a",
+          toolName: "git.push",
+        }),
+      ]),
+    });
+
+    expect(validateTaskDecompositionPlan({
+      ...plan,
+      children: [
+        {
+          ...plan.children[0]!,
+          riskLevel: "high",
+          requiresApproval: true,
+        },
+      ],
+    })).toEqual({
+      valid: true,
+      issues: [],
+    });
+  });
+
+  it("requires child documentation for documentation-sensitive worker tools", () => {
+    const toolCatalog: OrchestrationToolHarnessCatalog = [
+      {
+        name: "framework.lookup",
+        title: "Framework Lookup",
+        description: "Fetch current framework documentation before planning implementation work.",
+        mode: "external",
+        riskLevel: "low",
+        documentationRequired: true,
+        failureModes: ["docs_unavailable"],
+      },
+      {
+        name: "search_repo",
+        title: "Search Repo",
+        description: "Search repository text and filenames.",
+        mode: "read",
+        riskLevel: "low",
+        failureModes: ["search_failed"],
+      },
+    ];
+    const plan = buildPlan({
+      children: [
+        {
+          ...buildPlan().children[0],
+          allowedToolNames: ["framework.lookup", "search_repo"],
+          requiredDocumentation: undefined,
+        },
+      ],
+    });
+
+    expect(validateTaskDecompositionPlan(plan, { toolCatalog })).toMatchObject({
+      valid: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "TOOL_DOCUMENTATION_REQUIRED",
+          taskId: "child-a",
+          toolName: "framework.lookup",
         }),
       ]),
     });
