@@ -86,6 +86,22 @@ Allowed tools must match the declared execution scope. Write tools such as
 tasks, while publishing tools such as `git.push` and `github.open_pr` require
 approval-gated children.
 
+## Review Snapshots
+
+`src/review.ts` provides pure snapshot builders for plan and graph review UX.
+`buildOrchestrationPlanReviewSnapshot` takes an
+`OrchestrationTaskDecompositionPlan` plus its
+`OrchestrationPlanValidationResult` and summarizes validation failures,
+warnings, worker write boundaries, dependencies, verification requirements, and
+approval-gated children.
+
+`buildOrchestrationGraphReviewSnapshot` takes an
+`OrchestrationTaskGraphSnapshot` and optional
+`OrchestrationTaskGraphResultSnapshot` to summarize worker state, runtime
+identity, result classification, and final synthesis readiness. Synthesis is
+reported as `not_ready` until the neutral parent synthesis record exists, and
+`ready` once that record is present.
+
 ## Result and Synthesis Substrate
 
 The orchestration boundary already has the neutral M30 result shape. Worker
