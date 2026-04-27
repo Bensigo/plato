@@ -163,7 +163,7 @@ class JsonlRpcProcessTransport implements CodexAccountRpcTransport {
       this.#stderr += chunk.toString("utf8");
     });
     this.#child.once("error", (error) => {
-      this.#rejectAll(error);
+      this.#rejectAll(formatCodexProcessError(error, options.command));
     });
     this.#child.once("exit", (code, signal) => {
       if (!this.#closed) {
@@ -390,6 +390,22 @@ function formatRpcError(error: unknown): string {
     return error.message;
   }
   return "Codex app-server request failed";
+}
+
+function formatCodexProcessError(error: Error & NodeJS.ErrnoException, command: string): Error {
+  if (error.code === "ENOENT") {
+    return new Error(
+      [
+        `Codex CLI was not found at "${command}".`,
+        "Install the official Codex CLI with: npm install -g @openai/codex",
+        "Then run: plato config auth-chatgpt",
+        "If Codex is installed in a custom location, pass: plato config auth-chatgpt --codex-path <path>",
+      ].join("\n"),
+      { cause: error },
+    );
+  }
+
+  return error;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

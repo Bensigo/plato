@@ -49,6 +49,24 @@ class FakeTransport implements CodexAccountRpcTransport {
 }
 
 describe("CodexAppServerAuthClient", () => {
+  it("explains how to install Codex when the CLI binary is missing", async () => {
+    const client = new CodexAppServerAuthClient({
+      codexPath: "__plato_missing_codex_binary__",
+    });
+
+    try {
+      await expect(client.readAccount()).rejects.toThrow(
+        [
+          'Codex CLI was not found at "__plato_missing_codex_binary__".',
+          "Install the official Codex CLI with: npm install -g @openai/codex",
+          "Then run: plato config auth-chatgpt",
+        ].join("\n"),
+      );
+    } finally {
+      client.close();
+    }
+  });
+
   it("starts browser ChatGPT OAuth and reads the signed-in Codex account", async () => {
     const transport = new FakeTransport({
       loginStart: {
