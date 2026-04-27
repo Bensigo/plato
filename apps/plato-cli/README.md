@@ -24,6 +24,16 @@ The package exposes two thin executables:
 - `plato` for operator CLI commands, including `plato mcp`
 - `plato-mcp` for agent configs that prefer a dedicated MCP command
 
+It also exposes a deterministic health check:
+
+```sh
+pnpm --filter @plato/cli smoke
+```
+
+The smoke command exercises task start, status, list, and events through the
+real CLI handlers using an in-memory fake runtime. For the real Codex-backed
+manual smoke path, see [docs/local-task-smoke.md](/Users/macbook/work/plato/docs/local-task-smoke.md).
+
 Both MCP entrypoints use stdio transport. Do not write normal logs to stdout in
 this process; stdout is reserved for MCP JSON-RPC messages.
 

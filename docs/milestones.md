@@ -96,6 +96,13 @@ Current M26 scope:
 - runtime-backed MCP server connection using the same neutral orchestration bootstrap
 - smoke coverage for MCP tool discovery and tool calls over an MCP transport
 
+Current M27 scope:
+
+- deterministic `plato smoke` command for the local task lifecycle surface
+- smoke coverage for task start, status, list, and events through CLI handlers
+- first-run documentation for real Codex-backed local smoke testing with explicit temp storage
+- debugging guidance for missing auth, runtime, repo path, worktree, and event inspection issues
+
 ## Milestone 5a: Agent-Agnostic Orchestration Boundary
 
 Goal: keep Plato's product-facing orchestration model independent from any one agent backend.
