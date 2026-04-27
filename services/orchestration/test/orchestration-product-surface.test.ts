@@ -661,6 +661,44 @@ describe("OrchestrationProductSurface", () => {
     }
   });
 
+  it("does not classify policy signals from substrings inside unrelated words", () => {
+    const backendPlan = createTaskDecompositionPlan({
+      taskId: "backend-contract",
+      workspacePath: "/repo",
+      prompt: "Build backend service contract validation for orchestration workers.",
+    });
+    const backendImplementation = backendPlan.children.find((child) =>
+      child.taskId === "backend-contract-implementation"
+    );
+
+    expect(backendImplementation).toMatchObject({
+      writeScope: {
+        paths: ["services/orchestration/src", "services/orchestration/test"],
+      },
+      contextPackage: expect.objectContaining({
+        summary: expect.stringContaining("Task class policy: Backend service"),
+      }),
+    });
+
+    const defaultPlan = createTaskDecompositionPlan({
+      taskId: "policy-work",
+      workspacePath: "/repo",
+      prompt: "Implement decomposition policies for specific orchestration behavior.",
+    });
+    const defaultImplementation = defaultPlan.children.find((child) =>
+      child.taskId === "policy-work-implementation"
+    );
+
+    expect(defaultImplementation).toMatchObject({
+      writeScope: {
+        paths: ["services/orchestration/src", "services/orchestration/test"],
+      },
+      contextPackage: expect.objectContaining({
+        summary: expect.stringContaining("Task class policy: Backend service"),
+      }),
+    });
+  });
+
   it("keeps caller-provided scopes while applying the matching policy verification template", () => {
     const plan = createTaskDecompositionPlan({
       taskId: "custom-cli",

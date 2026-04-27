@@ -1008,7 +1008,22 @@ function defaultWriteScopePathsForPolicy(
 }
 
 function hasAnyPolicySignal(haystack: string, needles: string[]): boolean {
-  return needles.some((needle) => haystack.includes(needle));
+  return needles.some((needle) => matchesPolicySignal(haystack, needle));
+}
+
+function matchesPolicySignal(haystack: string, needle: string): boolean {
+  const normalizedNeedle = needle.trim().toLowerCase();
+  if (normalizedNeedle.length === 0) {
+    return false;
+  }
+  if (/[/.]/.test(normalizedNeedle)) {
+    return haystack.includes(normalizedNeedle);
+  }
+  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(normalizedNeedle)}($|[^a-z0-9])`, "i").test(haystack);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function normalizeWriteScopePaths(
